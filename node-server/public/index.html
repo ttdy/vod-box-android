@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>聚合影院 · 多源影视</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand" id="brand"><span class="logo">▶</span> 聚合影院</div>
+  <div class="controls">
+    <select id="srcSel" title="切换采集源"></select>
+    <form id="searchForm" class="search">
+      <input id="kw" type="search" placeholder="搜索影片" autocomplete="off">
+      <button type="submit">搜索</button>
+      <ul id="searchHist" class="search-hist" hidden></ul>
+    </form>
+    <button id="historyBtn" class="ghost">历史</button>
+  </div>
+</header>
+
+<!-- 首页 -->
+<section id="home" class="view active">
+  <nav class="cats" id="cats"></nav>
+  <div class="grid" id="grid"></div>
+  <div class="loadmore" id="loadmore">
+    <button id="moreBtn" class="primary">加载更多</button>
+  </div>
+  <div class="empty" id="empty" hidden>暂无数据，请切换采集源或搜索关键词</div>
+</section>
+
+<!-- 详情 -->
+<section id="detail" class="view">
+  <div class="detail-head">
+    <button id="backBtn" class="ghost">← 返回</button>
+    <button id="homeBtn" class="ghost">首页</button>
+    <h1 id="dTitle"></h1>
+    <button id="resumeBtn" class="primary" hidden>▶ 继续播放</button>
+  </div>
+  <div class="player-wrap">
+    <video id="video" controls playsinline preload="metadata"></video>
+    <div class="player-tip" id="playerTip">选择下方剧集开始播放</div>
+  </div>
+  <div class="ep-block" id="epBlock"></div>
+  <div class="d-info" id="dInfo"></div>
+</section>
+
+<!-- 历史 -->
+<section id="history" class="view">
+  <div class="detail-head">
+    <button id="backHistoryBtn" class="ghost">← 返回</button>
+    <h1>播放历史</h1>
+    <button id="clearHistoryBtn" class="ghost">清空</button>
+  </div>
+  <div class="grid" id="historyGrid"></div>
+  <div class="empty" id="historyEmpty" hidden>暂无播放历史</div>
+</section>
+
+<script src="/hls.js/hls.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+{
+  "liangzi": {
+    "name": "量子资源",
+    "api": "http://cj.lziapi.com/api.php/provide/vod/",
+    "format": "json",
+    "cats": [
+      { "id": "1", "name": "电影" },
+      { "id": "2", "name": "电视剧" },
+      { "id": "3", "name": "综艺" },
+      { "id": "4", "name": "动漫" }
+    ]
+  },
+  "hongniu": {
+    "name": "红牛资源",
+    "api": "https://www.hongniuzy2.com/api.php/provide/vod/",
+    "format": "json",
+    "cats": [
+      { "id": "1", "name": "电影" },
+      { "id": "2", "name": "电视剧" },
+      { "id": "3", "name": "综艺" },
+      { "id": "4", "name": "动漫" }
+    ]
+  },
+  "feifan": {
+    "name": "非凡资源",
+    "api": "https://cj.ffzyapi.com/api.php/provide/vod/",
+    "format": "json",
+    "cats": [
+      { "id": "1", "name": "电影" },
+      { "id": "2", "name": "电视剧" },
+      { "id": "3", "name": "综艺" },
+      { "id": "4", "name": "动漫" }
+    ]
+  },
+  "tiankong": {
+    "name": "天空资源",
+    "api": "https://api.1080zyku.com/api.php/provide/vod/",
+    "format": "rss",
+    "cats": []
+  }
+}

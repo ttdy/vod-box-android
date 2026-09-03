@@ -1,0 +1,14 @@
+{
+  "name": "vod-box",
+  "version": "1.0.0",
+  "description": "多采集源影视聚合应用（量子/红牛/非凡/天空），支持影片浏览、播放与历史",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "hls.js": "^1.5.13"
+  }
+}

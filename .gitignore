@@ -1,0 +1,15 @@
+# Gradle / Android
+.gradle/
+build/
+app/build/
+local.properties
+app/libnode/
+
+# Node
+node_modules/
+app/src/main/assets/nodejs-project/
+
+# IDE
+.idea/
+*.iml
+.DS_Store
