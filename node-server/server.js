@@ -45,16 +45,67 @@ const DEFAULT_SOURCES = {
   },
 };
 
-function loadSources() {
+// ---------- 配置解析 ----------
+// config.json 顶层：源 key -> {name,api,format,cats}；可选控制键：
+//   remoteConfigUrl : 外部接口配置(json)链接，服务启动/每60秒拉取，拉取成功即覆盖本地源（失败沿用本地）
+//   _pro            : { 源key -> {...} }，用于高级模式(/aaa 或 mode=pro)的采集源
+function isSource(v) {
+  return !!v && typeof v === 'object' && typeof v.api === 'string';
+}
+
+function parseConfig(raw) {
+  const out = { remoteConfigUrl: '', sources: {}, sourcesPro: {} };
+  if (!raw || typeof raw !== 'object') return out;
+  for (const k of Object.keys(raw)) {
+    const v = raw[k];
+    if (k === 'remoteConfigUrl') {
+      if (typeof v === 'string') out.remoteConfigUrl = v.trim();
+    } else if (k === '_pro' && v && typeof v === 'object') {
+      for (const pk of Object.keys(v)) if (isSource(v[pk])) out.sourcesPro[pk] = v[pk];
+    } else if (isSource(v)) {
+      out.sources[k] = v;
+    }
+  }
+  return out;
+}
+
+function readLocalConfig() {
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
-    return Object.assign({}, DEFAULT_SOURCES, cfg || {});
+    return JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
   } catch (e) {
-    return DEFAULT_SOURCES;
+    return {};
   }
 }
 
-let SOURCES = loadSources();
+const _cfg = parseConfig(readLocalConfig());
+let SOURCES = Object.assign({}, DEFAULT_SOURCES, _cfg.sources);
+const REMOTE_CONFIG_URL = _cfg.remoteConfigUrl;
+
+// 远程配置刷新（依赖下方 fetchText，调用时机晚于其定义即可）
+let _remoteFetchedAt = 0;
+async function refreshFromRemote(force) {
+  if (!REMOTE_CONFIG_URL) return false;
+  const now = Date.now();
+  if (!force && now - _remoteFetchedAt < 60 * 1000) return false;
+  _remoteFetchedAt = now;
+  try {
+    const txt = await fetchText(REMOTE_CONFIG_URL, { timeout: 10000 });
+    const rem = parseConfig(JSON.parse(txt));
+    SOURCES = Object.assign({}, DEFAULT_SOURCES, rem.sources);
+    SOURCES_PRO = Object.assign({}, DEFAULT_SOURCES_PRO, rem.sourcesPro);
+    console.log(`[config] 远程接口配置已生效(${Object.keys(rem.sources).length} 个源): ${REMOTE_CONFIG_URL}`);
+    return true;
+  } catch (e) {
+    console.error(`[config] 远程配置拉取失败，沿用本地: ${e.message}`);
+    return false;
+  }
+}
+
+function startRemoteConfigRefresh() {
+  if (!REMOTE_CONFIG_URL) return;
+  refreshFromRemote(true);
+  setInterval(() => refreshFromRemote(true), 60 * 1000);
+}
 
 // ---------- 高级模式采集源（/aaa 路径，如意接口）----------
 const DEFAULT_SOURCES_PRO = {
@@ -77,7 +128,7 @@ const DEFAULT_SOURCES_PRO = {
     ],
   },
 };
-let SOURCES_PRO = DEFAULT_SOURCES_PRO;
+let SOURCES_PRO = Object.assign({}, DEFAULT_SOURCES_PRO, _cfg.sourcesPro);
 
 // ---------- 基础工具 ----------
 const agent = new https.Agent({ keepAlive: true, maxSockets: 64 });
@@ -472,6 +523,9 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// 启动即拉取远程接口配置并每 60 秒刷新（配置了 remoteConfigUrl 才生效）
+startRemoteConfigRefresh();
 
 // nodejs-mobile (Android) 只允许本机访问，桌面版照常监听所有网卡
 const HOST = process.platform === 'android' ? '127.0.0.1' : undefined;
