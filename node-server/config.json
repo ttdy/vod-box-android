@@ -1,5 +1,5 @@
 {
-  "remoteConfigUrl": "https://cdn.jsdelivr.net/gh/ttdy/vod-config@main/config.json",
+  "remoteConfigUrl": "https://tvcc.de5.net/abc.json",
   "liangzi": {
     "name": "量子资源",
     "api": "http://cj.lziapi.com/api.php/provide/vod/",
