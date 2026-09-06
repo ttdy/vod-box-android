@@ -266,7 +266,7 @@
       </div>`;
     }).join('');
     g.querySelectorAll('.card').forEach((el) => {
-      el.addEventListener('click', () => openDetail(el.dataset.id, {}, el.dataset.src || state.src));
+      el.addEventListener('click', () => openDetail(el.dataset.id, { play: true }, el.dataset.src || state.src));
     });
   }
 
