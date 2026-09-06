@@ -116,10 +116,29 @@
   }
 
   // ---------- 视图 ----------
+  let curView = null;          // 当前视图(home/history/detail)
+  let detailNav = false;       // 详情页是否已压入浏览器历史
+  let prevDetailView = null;   // 进入详情前的视图，供返回键回退
+
   function showView(name) {
     if (name !== 'detail') stopPlayback();
+    curView = name;
     Object.keys(views).forEach((k) => views[k].classList.toggle('active', k === name));
   }
+
+  // 手机/浏览器返回键：从播放页(详情)回到进入前的页面
+  window.addEventListener('popstate', () => {
+    if (detailNav) {
+      detailNav = false;
+      if (prevDetailView === 'history') {
+        renderHistory();
+        showView('history');
+      } else {
+        showView('home');
+        renderGrid(state.list);
+      }
+    }
+  });
 
   function stopPlayback() {
     destroyHls();
@@ -302,6 +321,11 @@
       state.src = src;
       $('#srcSel').value = src;
       localStorage.setItem('vb_src', src);
+    }
+    if (curView !== 'detail') {
+      prevDetailView = curView;
+      detailNav = true;
+      try { history.pushState({ vb: 'detail' }, '', location.href); } catch (e) {}
     }
     showView('detail');
     $('#dTitle').textContent = '加载中…';
@@ -564,7 +588,10 @@
   $('#kw').addEventListener('focus', renderSearchHist);
   $('#kw').addEventListener('blur', () => setTimeout(hideSearchHist, 150));
   $('#moreBtn').addEventListener('click', () => fetchList(++state.page, true));
-  $('#backBtn').addEventListener('click', () => { showView('home'); renderGrid(state.list); });
+  $('#backBtn').addEventListener('click', () => {
+    if (detailNav && history.length > 1) { try { history.back(); } catch (e) { detailNav = false; showView('home'); renderGrid(state.list); } }
+    else { showView('home'); renderGrid(state.list); }
+  });
   $('#brand').addEventListener('click', () => { showView('home'); renderGrid(state.list); });
   $('#homeBtn').addEventListener('click', () => { showView('home'); renderGrid(state.list); });
   $('#backHistoryBtn').addEventListener('click', () => { showView('home'); renderGrid(state.list); });
