@@ -86,6 +86,13 @@
   let resumeSeek = null;   // 需要恢复的秒数
   let lastSave = 0;
   let saveTimer = null;
+  // 顶部切换：普通区 / 高级区(/aaa)
+  const proToggle = document.getElementById('proToggle');
+  if (proToggle) {
+    proToggle.textContent = PRO_MODE ? '普通' : '高级';
+    proToggle.addEventListener('click', () => { location.href = PRO_MODE ? '/' : '/aaa'; });
+  }
+
   const views = { home: $('#home'), detail: $('#detail'), history: $('#history') };
 
   // ---------- 历史 ----------
