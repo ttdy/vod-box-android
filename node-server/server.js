@@ -537,7 +537,7 @@ app.get('/api/img', async (req, res) => {
 });
 
 // ---------- 静态资源 ----------
-app.use('/hls.js', express.static(path.join(__dirname, 'node_modules/hls.js/dist'), { maxAge: '7d' }));
+// /hls.js/hls.min.js 已改为 public/hls.js/hls.min.js 静态文件提供(不再依赖 node_modules/hls.js)
 app.use(express.static(path.join(__dirname, 'public')));
 
 // SPA 回退：非 API/非静态文件路径返回首页（支持 /aaa 高级模式）

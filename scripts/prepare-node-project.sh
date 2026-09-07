@@ -23,9 +23,9 @@ cp "$SRC/server.js" "$DEST/server.js"
 cp "$SRC/package.json" "$DEST/package.json"
 cp -r "$SRC/public" "$DEST/public"
 
-echo ">> npm install (express、hls.js)"
+echo ">> npm install (express；hls.min.js 已作为静态文件置于 public/hls.js/，不再安装体积约 30MB 的 hls.js npm 包)"
 cd "$DEST"
-npm install --omit=dev --no-audit --no-fund
+npm install --omit=dev --no-audit --no-fund express
 
 echo ">> 完成: $DEST"
 du -sh "$DEST"
