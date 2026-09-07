@@ -9,7 +9,9 @@ import android.content.res.AssetManager;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Looper;
+import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -41,6 +43,9 @@ public class MainActivity extends Activity {
     private WebView webView;
     private FrameLayout loadingView;
     private static boolean clearedProSession = false;
+    private View customView = null;
+    private WebChromeClient.CustomViewCallback customViewCallback = null;
+    private FrameLayout fullscreenContainer = null;
 
     public native Integer startNodeWithArguments(String[] arguments);
 
@@ -48,8 +53,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        FrameLayout root = new FrameLayout(this);
 
         webView = new WebView(this);
         loadingView = new FrameLayout(this);
@@ -68,19 +72,26 @@ public class MainActivity extends Activity {
         box.addView(tv);
         loadingView.addView(box, lp);
 
-        root.addView(loadingView, new LinearLayout.LayoutParams(
+        root.addView(loadingView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        root.addView(webView, new LinearLayout.LayoutParams(
+        root.addView(webView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         setContentView(root);
         webView.setVisibility(android.view.View.GONE);
+
+        fullscreenContainer = new FrameLayout(this);
+        fullscreenContainer.setBackgroundColor(Color.BLACK);
+        fullscreenContainer.setVisibility(View.GONE);
+        root.addView(fullscreenContainer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         WebSettings ws = webView.getSettings();
         ws.setJavaScriptEnabled(true);
         ws.setDomStorageEnabled(true);
         ws.setAllowFileAccess(false);
         ws.setMediaPlaybackRequiresUserGesture(false);
+        ws.setUseWideViewPort(true);
         if (android.os.Build.VERSION.SDK_INT >= 21) {
             ws.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
@@ -112,6 +123,25 @@ public class MainActivity extends Activity {
                     startActivity(i);
                 } catch (Exception ignored) {}
                 return true;
+            }
+        });
+
+        // HTML5 视频全屏支持（WebView 原生全屏需要 WebChromeClient 接管全屏视图）
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onShowCustomView(View view, CustomViewCallback callback) {
+                if (customView != null) { callback.onCustomViewHidden(); return; }
+                customView = view;
+                customViewCallback = callback;
+                webView.setVisibility(View.INVISIBLE);
+                fullscreenContainer.addView(customView, new FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                fullscreenContainer.setVisibility(View.VISIBLE);
+            }
+
+            @Override
+            public void onHideCustomView() {
+                exitFullscreen();
             }
         });
 
@@ -175,8 +205,19 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void exitFullscreen() {
+        if (customView == null) return;
+        if (customViewCallback != null) customViewCallback.onCustomViewHidden();
+        customView = null;
+        customViewCallback = null;
+        fullscreenContainer.removeAllViews();
+        fullscreenContainer.setVisibility(View.GONE);
+        webView.setVisibility(View.VISIBLE);
+    }
+
     @Override
     public void onBackPressed() {
+        if (customView != null) { exitFullscreen(); return; }
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
         } else {
@@ -186,6 +227,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (customView != null) exitFullscreen();
         if (webView != null) webView.destroy();
         super.onDestroy();
     }
