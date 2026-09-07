@@ -40,6 +40,7 @@ public class MainActivity extends Activity {
 
     private WebView webView;
     private FrameLayout loadingView;
+    private static boolean clearedProSession = false;
 
     public native Integer startNodeWithArguments(String[] arguments);
 
@@ -84,6 +85,21 @@ public class MainActivity extends Activity {
             ws.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                // 每次进程冷启动只清一次：清除已保存的高级模式密码标记，
+                // 使"每次打开 App 后进入高级模式(/aaa)都需重新输入密码"
+                if (!clearedProSession) {
+                    clearedProSession = true;
+                    if (url != null && url.startsWith(NODE_URL)) {
+                        view.evaluateJavascript(
+                            "try{localStorage.removeItem('vb_pro_ok');localStorage.removeItem('vb_pro_pwd')}catch(e){}",
+                            null);
+                    }
+                }
+            }
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String u = request.getUrl().toString();
