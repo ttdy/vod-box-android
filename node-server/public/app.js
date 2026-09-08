@@ -82,6 +82,72 @@
   }
 
   const video = $('#video');
+
+  // ---------- 全屏按钮（兼容 WebView / 浏览器） ----------
+  const fsBtn = document.getElementById('fsBtn');
+  if (fsBtn) {
+    const fsActive = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+    const syncFs = () => { fsBtn.textContent = fsActive() ? '退出' : '全屏'; };
+    fsBtn.addEventListener('click', () => {
+      if (fsActive()) {
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      } else {
+        const req = video.requestFullscreen || video.webkitRequestFullscreen || video.webkitEnterFullscreen;
+        if (req) { const p = req.call(video); if (p && p.catch) p.catch(function () {}); }
+      }
+    });
+    document.addEventListener('fullscreenchange', syncFs);
+    document.addEventListener('webkitfullscreenchange', syncFs);
+    video.addEventListener('play', () => fsBtn.classList.add('show'));
+    video.addEventListener('pause', () => fsBtn.classList.remove('show'));
+    syncFs();
+  }
+
+  // ---------- 播放画面左右滑动快进/快退 ----------
+  (function () {
+    const wrap = document.querySelector('.player-wrap');
+    if (!wrap) return;
+    const tip = document.createElement('div');
+    tip.className = 'seek-tip';
+    tip.style.display = 'none';
+    wrap.appendChild(tip);
+    let gs = null;
+    let hideTimer = null;
+    video.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1 || !isFinite(video.duration) || video.duration <= 0) return;
+      const r = video.getBoundingClientRect();
+      const t = e.touches[0];
+      if (t.clientY > r.bottom - 52) return;
+      gs = { x: t.clientX, y: t.clientY, base: video.currentTime };
+    }, { passive: true });
+    video.addEventListener('touchmove', (e) => {
+      if (!gs) return;
+      const t = e.touches[0];
+      const dx = t.clientX - gs.x;
+      const dy = t.clientY - gs.y;
+      if (Math.abs(dx) < 16 && Math.abs(dy) < 16) return;
+      if (Math.abs(dy) > Math.abs(dx) * 1.4) { gs = null; return; }
+      if (e.cancelable) e.preventDefault();
+      const dur = video.duration || 1;
+      const w = wrap.clientWidth || video.clientWidth || 360;
+      const sec = Math.max(0, Math.min(dur, gs.base + dur * dx / w));
+      if (isFinite(sec)) {
+        try { video.currentTime = sec; } catch (err) {}
+        tip.textContent = fmtTime(sec) + ' / ' + fmtTime(dur);
+        tip.style.display = 'block';
+      }
+    }, { passive: false });
+    const end = () => {
+      if (gs) {
+        gs = null;
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => { tip.style.display = 'none'; }, 600);
+      }
+    };
+    video.addEventListener('touchend', end);
+    video.addEventListener('touchcancel', end);
+  })();
   let hls = null;
   let resumeSeek = null;   // 需要恢复的秒数
   let lastSave = 0;

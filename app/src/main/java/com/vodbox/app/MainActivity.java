@@ -133,6 +133,12 @@ public class MainActivity extends Activity {
                 if (customView != null) { callback.onCustomViewHidden(); return; }
                 customView = view;
                 customViewCallback = callback;
+                // 全屏时锁定横屏，让 16:9 视频铺满整屏，去掉上下黑边与页面标题残留
+                if (getResources().getConfiguration().orientation
+                        != android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+                    setRequestedOrientation(
+                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+                }
                 webView.setVisibility(View.INVISIBLE);
                 fullscreenContainer.addView(customView, new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -213,6 +219,8 @@ public class MainActivity extends Activity {
         fullscreenContainer.removeAllViews();
         fullscreenContainer.setVisibility(View.GONE);
         webView.setVisibility(View.VISIBLE);
+        // 退出全屏后恢复系统的自动旋转
+        setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
     }
 
     @Override
