@@ -5,6 +5,9 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -35,7 +38,14 @@ jobs:
       - name: 准备 nodejs-project assets
         run: bash scripts/prepare-node-project.sh
 
+      - name: 还原签名 keystore
+        run: |
+          echo "${{ secrets.VODBOX_KEYSTORE_B64 }}" | base64 -d > /tmp/vodbox-release.jks
+
       - name: 构建 release APK
+        env:
+          VODBOX_KEYSTORE_FILE: /tmp/vodbox-release.jks
+          VODBOX_KEYSTORE_PASS: ${{ secrets.VODBOX_KEYSTORE_PASS }}
         run: gradle assembleRelease --no-daemon
 
       - name: 上传 APK 产物
@@ -43,3 +53,16 @@ jobs:
         with:
           name: vod-box-android-apk
           path: app/build/outputs/apk/release/*.apk
+
+      - name: 发布 GitHub Release（作为升级下载源）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(grep -m1 'versionName' app/build.gradle | sed -E 's/.*"([0-9.]+)".*/\1/')
+          TAG="v${VERSION}"
+          APKS=(app/build/outputs/apk/release/*.apk)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${APKS[@]}"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "VodBox $VERSION" --notes "自动构建产物" "${APKS[@]}"
+          fi

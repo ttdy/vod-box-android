@@ -1,14 +1,20 @@
 package com.vodbox.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.ProgressDialog;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.graphics.Color;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Looper;
+import android.provider.Settings;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.WebChromeClient;
@@ -20,7 +26,11 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
+import org.json.JSONObject;
+
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -32,6 +42,7 @@ import java.net.URL;
 public class MainActivity extends Activity {
 
     private static final String NODE_URL = "http://127.0.0.1:3000/";
+    private static final String UPDATE_JSON_URL = "https://ttdy.github.io/update.json";
 
     static {
         System.loadLibrary("native-lib");
@@ -46,6 +57,9 @@ public class MainActivity extends Activity {
     private View customView = null;
     private WebChromeClient.CustomViewCallback customViewCallback = null;
     private FrameLayout fullscreenContainer = null;
+
+    // 更新检测相关
+    private static final String UPDATE_FILE_AUTHORITY = "com.vodbox.app.updatefile";
 
     public native Integer startNodeWithArguments(String[] arguments);
 
@@ -156,6 +170,159 @@ public class MainActivity extends Activity {
             startNodeThread();
         }
         waitForServerThenLoad();
+        checkForUpdates();
+    }
+
+    // ==================== 启动检查更新 ====================
+
+    private void checkForUpdates() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                String json;
+                try {
+                    HttpURLConnection c = (HttpURLConnection) new URL(UPDATE_JSON_URL).openConnection();
+                    c.setConnectTimeout(8000);
+                    c.setReadTimeout(8000);
+                    int code = c.getResponseCode();
+                    if (code != 200) { c.disconnect(); return; }
+                    InputStream in = c.getInputStream();
+                    ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                    byte[] buf = new byte[4096];
+                    int n;
+                    while ((n = in.read(buf)) != -1) bo.write(buf, 0, n);
+                    in.close();
+                    c.disconnect();
+                    json = bo.toString("UTF-8");
+                } catch (Exception e) {
+                    return;
+                }
+                try {
+                    JSONObject o = new JSONObject(json);
+                    final int remoteVersion = o.optInt("versionCode", 0);
+                    int localVersion = getAppVersionCode();
+                    if (remoteVersion <= localVersion) return;
+                    final String apkUrl = pickApkUrl(o);
+                    if (apkUrl.isEmpty()) return;
+                    final String note = o.optString("note", "发现新版本，是否立即更新？");
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            new AlertDialog.Builder(MainActivity.this)
+                                    .setTitle("发现新版本 v" + o.optString("versionName", String.valueOf(remoteVersion)))
+                                    .setMessage(note)
+                                    .setPositiveButton("立即更新", (dialog, which) -> downloadAndInstall(apkUrl))
+                                    .setNegativeButton("暂不更新", null)
+                                    .show();
+                        }
+                    });
+                } catch (Exception ignored) {}
+            }
+        }).start();
+    }
+
+    private int getAppVersionCode() {
+        try {
+            PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            if (Build.VERSION.SDK_INT >= 28) return (int) pi.getLongVersionCode();
+            return pi.versionCode;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private String pickApkUrl(JSONObject o) {
+        String abi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "arm64-v8a";
+        String apkUrl = o.optString("apk", "");
+        if (abi.contains("arm64")) {
+            String v = o.optString("apkArm64", "");
+            if (!v.isEmpty()) apkUrl = v;
+        } else if (abi.contains("armeabi")) {
+            String v = o.optString("apkArm", "");
+            if (!v.isEmpty()) apkUrl = v;
+        }
+        return apkUrl;
+    }
+
+    private void downloadAndInstall(final String url) {
+        final ProgressDialog pd = new ProgressDialog(this);
+        pd.setMessage("正在下载更新包…");
+        pd.setIndeterminate(true);
+        pd.setCancelable(false);
+        pd.show();
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                File target = null;
+                String err = null;
+                try {
+                    File dir = getExternalFilesDir("update");
+                    if (dir == null) dir = getFilesDir();
+                    if (!dir.exists()) dir.mkdirs();
+                    target = new File(dir, "vodbox-update.apk");
+                    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                    c.setConnectTimeout(10000);
+                    c.setReadTimeout(30000);
+                    int code = c.getResponseCode();
+                    if (code != 200) {
+                        err = "下载失败（HTTP " + code + "）";
+                    } else {
+                        InputStream in = c.getInputStream();
+                        OutputStream out = new FileOutputStream(target);
+                        byte[] buf = new byte[8192];
+                        int n;
+                        while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+                        in.close();
+                        out.close();
+                    }
+                    c.disconnect();
+                } catch (Exception e) {
+                    err = "下载失败：" + e.getMessage();
+                }
+                final File apk = target;
+                final String e2 = err;
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        pd.dismiss();
+                        if (e2 != null) {
+                            Toast.makeText(MainActivity.this, e2, Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        if (apk != null && apk.exists()) {
+                            installApk(apk);
+                        }
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void installApk(File apk) {
+        if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("需要安装权限")
+                    .setMessage("为保证更新可正常安装，请在系统设置中允许本应用安装未知来源应用。")
+                    .setPositiveButton("去设置", (dialog, which) -> {
+                        try {
+                            Intent it = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    Uri.parse("package:" + getPackageName()));
+                            startActivity(it);
+                        } catch (Exception ignored) {}
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+            return;
+        }
+        try {
+            Uri uri = Uri.parse("content://" + UPDATE_FILE_AUTHORITY + "/" + Uri.encode(apk.getName()));
+            Intent it = new Intent(Intent.ACTION_VIEW);
+            it.setDataAndType(uri, "application/vnd.android.package-archive");
+            it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(it);
+        } catch (Exception e) {
+            Toast.makeText(this, "无法打开安装器", Toast.LENGTH_LONG).show();
+        }
     }
 
     private void startNodeThread() {
