@@ -1,5 +1,8 @@
 apply plugin: 'com.android.application'
 
+def ksFile = System.getenv('VODBOX_KEYSTORE_FILE')
+def hasKs = ksFile != null && file(ksFile).exists()
+
 android {
     namespace 'com.vodbox.app'
     compileSdk 34
@@ -27,8 +30,7 @@ android {
     }
     signingConfigs {
         release {
-            def ksFile = System.getenv('VODBOX_KEYSTORE_FILE')
-            if (ksFile != null && file(ksFile).exists()) {
+            if (hasKs) {
                 storeFile file(ksFile)
                 storePassword System.getenv('VODBOX_KEYSTORE_PASS')
                 keyAlias 'vodbox'
@@ -39,9 +41,11 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig (System.getenv('VODBOX_KEYSTORE_FILE') != null
-                    && file(System.getenv('VODBOX_KEYSTORE_FILE')).exists())
-                    ? signingConfigs.release : signingConfigs.debug
+            if (hasKs) {
+                signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
+            }
         }
     }
     externalNativeBuild {
