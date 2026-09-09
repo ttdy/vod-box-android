@@ -85,20 +85,8 @@ jobs:
           rm -rf /tmp/pages-site
           git clone --depth 1 "https://x-access-token:${VOD_PAGES_TOKEN}@github.com/ttdy/ttdy.github.io.git" /tmp/pages-site
           cd /tmp/pages-site
-          python3 - "$VCODE" "$VERSION" "$NOTE" <<'PYEOF'
-import json, sys
-vcode, version, note = sys.argv[1], sys.argv[2], sys.argv[3]
-base = "https://github.com/ttdy/vod-box-android/releases/latest/download/"
-data = {
-    "versionCode": int(vcode),
-    "versionName": version,
-    "note": note,
-    "apk": base + "app-arm64-v8a-release.apk",
-    "apkArm64": base + "app-arm64-v8a-release.apk",
-    "apkArm": base + "app-armeabi-v7a-release.apk",
-}
-open("update.json", "w").write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
-PYEOF
+          BASE="https://github.com/ttdy/vod-box-android/releases/latest/download/"
+          jq -n --argjson vc "$VCODE" --arg v "$VERSION" --arg note "$NOTE" --arg b "$BASE" '{versionCode:$vc, versionName:$v, note:$note, apk:($b+"app-arm64-v8a-release.apk"), apkArm64:($b+"app-arm64-v8a-release.apk"), apkArm:($b+"app-armeabi-v7a-release.apk")}' > update.json
           git config user.name "vod-box-ci"
           git config user.email "ci@vod-box.local"
           git add update.json
