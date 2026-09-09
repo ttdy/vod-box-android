@@ -23,7 +23,7 @@ vod-android/
 ├── scripts/
 │   ├── fetch-libnode.sh            # 下载 nodejs-mobile 的 libnode.so 与头文件
 │   └── prepare-node-project.sh     # 由 node-server/ 生成 assets/nodejs-project
-├── .github/workflows/build-apk.yml # push 后自动构建并产出可下载 APK
+├── .github/workflows/build-apk.yml # push 后自动构建签名、发布 Release、同步 update.json
 └── settings.gradle / build.gradle
 ```
 
@@ -35,10 +35,43 @@ vod-android/
 
 1. 把 `vod-android` 目录作为一个 Git 仓库推到 GitHub（可单独建仓库）；
 2. 仓库页面 → Actions → `build-apk` 工作流会自动在 push 后运行；
-3. 构建成功后，在 Actions 运行记录页底部 Artifacts 下载 `vod-box-android-apk`；
-4. 解压出 `app-release.apk` 安装到 Android 设备（arm64-v8a / armeabi-v7a）。
+3. 构建成功后，在仓库 Releases 页面（或 Actions 运行记录页底部 Artifacts）下载 APK：
+   - `app-arm64-v8a-release.apk`：主流手机
+   - `app-armeabi-v7a-release.apk`：老机型
+4. 安装到 Android 设备。
 
 后续只要修改 `node-server/` 下的服务端或页面代码并 push，就会自动重新构建新 APK。
+
+## 如何发一个新版本（一键发版）
+
+构建成功后 CI 会**自动**发布 GitHub Release（v`versionName`）并把 `update.json`
+推送到 ttdy.github.io 仓库，App 启动时检测到新版本即可弹窗一键升级。只需两步：
+
+1. 修改 `app/build.gradle` 的版本号：
+
+   ```gradle
+   versionCode 3        // 必须比上一版大，否则 App 收不到升级提示
+   versionName "1.2"    // 与 update.json 保持一致，作为 Release tag（v1.2）
+   ```
+
+2. 提交并把升级说明写在 commit message 里，然后 push：
+
+   ```bash
+   git add -A
+   git commit -m "新增 XX 功能，修复 YY 问题"   # 这段文字会成为升级弹窗里的更新说明
+   git push origin main
+   ```
+
+CI 会自动完成后续所有事：签名构建 → 发布 `v1.2` Release → 读取最新 commit
+message 生成 update.json 并推送到 `ttdy/ttdy.github.io`。
+
+### 发版注意事项
+
+- `versionCode` 必须**单调递增**：等于或小于已装版本的 versionCode 时不会弹升级提示；
+- 首次从旧版（随机 debug 签名）升级到新签名版本需**先卸载旧版**再安装，此后可正常覆盖升级；
+- 同一版本重复构建时 update.json 内容不变，CI 会跳过推送，不会产生冗余提交；
+- CI 仓库需配置 secrets：`VODBOX_KEYSTORE_B64`、`VODBOX_KEYSTORE_PASS`（签名）与
+  `VOD_PAGES_TOKEN`（推送 ttdy.github.io 的 token，未配置则跳过 update.json 同步）。
 
 ### 方式二：本机手动构建
 
