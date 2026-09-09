@@ -60,9 +60,51 @@ jobs:
         run: |
           VERSION=$(grep -m1 'versionName' app/build.gradle | sed -E 's/.*"([0-9.]+)".*/\1/')
           TAG="v${VERSION}"
+          NOTE=$(git log -1 --pretty=%B | sed '/^$/d' | tr '\n' ' ' | cut -c1-200)
           APKS=(app/build/outputs/apk/release/*.apk)
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "${NOTE:-自动构建产物}" >/dev/null 2>&1 || true
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${APKS[@]}"
           else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "VodBox $VERSION" --notes "自动构建产物" "${APKS[@]}"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "VodBox $VERSION" --notes "${NOTE:-自动构建产物}" "${APKS[@]}"
+          fi
+
+      - name: 同步 update.json（一键发版升级源）
+        env:
+          VOD_PAGES_TOKEN: ${{ secrets.VOD_PAGES_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VOD_PAGES_TOKEN:-}" ]; then
+            echo "::warning::未配置 VOD_PAGES_TOKEN，跳过 update.json 自动同步（App 收不到升级提示）"
+            exit 0
+          fi
+          VERSION=$(grep -m1 'versionName' app/build.gradle | sed -E 's/.*"([0-9.]+)".*/\1/')
+          VCODE=$(grep -m1 'versionCode' app/build.gradle | sed -E 's/.*versionCode[[:space:]]+([0-9]+).*/\1/')
+          NOTE=$(git log -1 --pretty=%B | sed '/^$/d' | tr '\n' ' ' | cut -c1-200)
+          NOTE="${NOTE:-VodBox $VERSION}"
+          rm -rf /tmp/pages-site
+          git clone --depth 1 "https://x-access-token:${VOD_PAGES_TOKEN}@github.com/ttdy/ttdy.github.io.git" /tmp/pages-site
+          cd /tmp/pages-site
+          python3 - "$VCODE" "$VERSION" "$NOTE" <<'PYEOF'
+import json, sys
+vcode, version, note = sys.argv[1], sys.argv[2], sys.argv[3]
+base = "https://github.com/ttdy/vod-box-android/releases/latest/download/"
+data = {
+    "versionCode": int(vcode),
+    "versionName": version,
+    "note": note,
+    "apk": base + "app-arm64-v8a-release.apk",
+    "apkArm64": base + "app-arm64-v8a-release.apk",
+    "apkArm": base + "app-armeabi-v7a-release.apk",
+}
+open("update.json", "w").write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+PYEOF
+          git config user.name "vod-box-ci"
+          git config user.email "ci@vod-box.local"
+          git add update.json
+          if git diff --cached --quiet; then
+            echo "update.json 无变化，跳过推送"
+          else
+            git commit -m "chore: auto release v${VERSION}"
+            git push origin main
           fi
