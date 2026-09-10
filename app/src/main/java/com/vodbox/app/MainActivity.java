@@ -17,6 +17,8 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -57,6 +59,18 @@ public class MainActivity extends Activity {
     private View customView = null;
     private WebChromeClient.CustomViewCallback customViewCallback = null;
     private FrameLayout fullscreenContainer = null;
+
+    // 视频播放时保持屏幕常亮
+    private boolean videoPlaying = false;
+    private static final String SCREEN_KEEP_JS =
+            "(function(){if(window.__vbScreenKeep)return;window.__vbScreenKeep=true;" +
+            "function k(on){try{window.VodBoxScreen.setKeep(on)}catch(e){}}" +
+            "document.addEventListener('play',function(e){if(e.target&&e.target.tagName==='VIDEO')k(true)},true);" +
+            "document.addEventListener('playing',function(e){if(e.target&&e.target.tagName==='VIDEO')k(true)},true);" +
+            "document.addEventListener('pause',function(e){if(e.target&&e.target.tagName==='VIDEO')k(false)},true);" +
+            "document.addEventListener('ended',function(e){if(e.target&&e.target.tagName==='VIDEO')k(false)},true);" +
+            "document.addEventListener('emptied',function(e){if(e.target&&e.target.tagName==='VIDEO')k(false)},true);" +
+            "})();";
 
     // 更新检测相关
     private static final String UPDATE_FILE_AUTHORITY = "com.vodbox.app.updatefile";
@@ -109,10 +123,12 @@ public class MainActivity extends Activity {
         if (android.os.Build.VERSION.SDK_INT >= 21) {
             ws.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
+        webView.addJavascriptInterface(new ScreenKeepBridge(), "VodBoxScreen");
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
+                view.evaluateJavascript(SCREEN_KEEP_JS, null);
                 // 每次进程冷启动只清一次：清除已保存的高级模式密码标记，
                 // 使"每次打开 App 后进入高级模式(/aaa)都需重新输入密码"
                 if (!clearedProSession) {
@@ -157,6 +173,7 @@ public class MainActivity extends Activity {
                 fullscreenContainer.addView(customView, new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 fullscreenContainer.setVisibility(View.VISIBLE);
+                applyKeepScreenOn(true);
             }
 
             @Override
@@ -171,6 +188,29 @@ public class MainActivity extends Activity {
         }
         waitForServerThenLoad();
         checkForUpdates();
+    }
+
+    // ==================== 视频播放屏幕常亮 ====================
+
+    private class ScreenKeepBridge {
+        @JavascriptInterface
+        public void setKeep(final boolean on) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    videoPlaying = on;
+                    applyKeepScreenOn(on);
+                }
+            });
+        }
+    }
+
+    private void applyKeepScreenOn(boolean on) {
+        if (on) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
     }
 
     // ==================== 启动检查更新 ====================
@@ -388,6 +428,7 @@ public class MainActivity extends Activity {
         webView.setVisibility(View.VISIBLE);
         // 退出全屏后恢复系统的自动旋转
         setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        applyKeepScreenOn(videoPlaying);
     }
 
     @Override
