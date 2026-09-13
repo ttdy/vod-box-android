@@ -6,10 +6,12 @@ import android.app.ProgressDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
 import android.graphics.Color;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -17,6 +19,8 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
@@ -56,10 +60,9 @@ public class MainActivity extends Activity {
     private WebView webView;
     private FrameLayout loadingView;
     private static boolean clearedProSession = false;
-    private View customView = null;
-    private WebChromeClient.CustomViewCallback customViewCallback = null;
-    private FrameLayout fullscreenContainer = null;
-
+    // 页面内全屏状态（由网页通过 JS 桥控制），用于返回键退出全屏
+    private boolean jsFullscreen = false;
+    private AudioManager audioManager = null;
     // 视频播放时保持屏幕常亮
     private boolean videoPlaying = false;
     private static final String SCREEN_KEEP_JS =
@@ -108,11 +111,7 @@ public class MainActivity extends Activity {
         setContentView(root);
         webView.setVisibility(android.view.View.GONE);
 
-        fullscreenContainer = new FrameLayout(this);
-        fullscreenContainer.setBackgroundColor(Color.BLACK);
-        fullscreenContainer.setVisibility(View.GONE);
-        root.addView(fullscreenContainer, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
 
         WebSettings ws = webView.getSettings();
         ws.setJavaScriptEnabled(true);
@@ -124,6 +123,7 @@ public class MainActivity extends Activity {
             ws.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
         webView.addJavascriptInterface(new ScreenKeepBridge(), "VodBoxScreen");
+        webView.addJavascriptInterface(new FullscreenBridge(), "VodBoxFullscreen");
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
@@ -156,29 +156,14 @@ public class MainActivity extends Activity {
             }
         });
 
-        // HTML5 视频全屏支持（WebView 原生全屏需要 WebChromeClient 接管全屏视图）
+        // HTML5 视频全屏：统一重定向到网页的“页面内全屏”。
+        // 原生全屏在小尺寸/竖屏视频上会立刻触发 onHideCustomView（表现为闪一下），
+        // 因此这里直接取消原生全屏，交给网页用全屏 CSS 接管，手势也才能生效。
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
-                if (customView != null) { callback.onCustomViewHidden(); return; }
-                customView = view;
-                customViewCallback = callback;
-                // 全屏时锁定横屏，让 16:9 视频铺满整屏，去掉上下黑边与页面标题残留
-                if (getResources().getConfiguration().orientation
-                        != android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
-                    setRequestedOrientation(
-                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
-                }
-                webView.setVisibility(View.INVISIBLE);
-                fullscreenContainer.addView(customView, new FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                fullscreenContainer.setVisibility(View.VISIBLE);
-                applyKeepScreenOn(true);
-            }
-
-            @Override
-            public void onHideCustomView() {
-                exitFullscreen();
+                callback.onCustomViewHidden();
+                webView.evaluateJavascript("(window.__vbToggleFs?window.__vbToggleFs():0)", null);
             }
         });
 
@@ -210,6 +195,122 @@ public class MainActivity extends Activity {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         } else {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+    }
+
+    // ==================== 页面内全屏 & 亮度/音量桥接 ====================
+
+    private class FullscreenBridge {
+        /** landscape: 1 横屏, 0 竖屏, -1 未知（保持当前方向） */
+        @JavascriptInterface
+        public void enter(final double landscape) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    jsFullscreen = true;
+                    if (landscape == 1) {
+                        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+                    } else if (landscape == 0) {
+                        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
+                    }
+                    setImmersive(true);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void exit() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    jsFullscreen = false;
+                    setImmersive(false);
+                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+                    WindowManager.LayoutParams lp = getWindow().getAttributes();
+                    lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+                    getWindow().setAttributes(lp);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public double getBrightness() {
+            float b = getWindow().getAttributes().screenBrightness;
+            if (b >= 0) return b;
+            try {
+                int v = Settings.System.getInt(getContentResolver(), Settings.System.SCREEN_BRIGHTNESS);
+                return v / 255.0;
+            } catch (Exception e) {
+                return 0.5;
+            }
+        }
+
+        @JavascriptInterface
+        public void setBrightness(final double v) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    WindowManager.LayoutParams lp = getWindow().getAttributes();
+                    lp.screenBrightness = (float) Math.max(0.01, Math.min(1.0, v));
+                    getWindow().setAttributes(lp);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public int getVolume() {
+            if (audioManager == null) return 50;
+            int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            int cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+            return max > 0 ? Math.round(cur * 100f / max) : 0;
+        }
+
+        @JavascriptInterface
+        public void setVolume(final double percent) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (audioManager == null) return;
+                    int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                    int v = Math.round((float) Math.max(0, Math.min(100, percent)) * max / 100f);
+                    try {
+                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, v, 0);
+                    } catch (Exception ignored) {}
+                }
+            });
+        }
+    }
+
+    private void setImmersive(boolean on) {
+        View decor = getWindow().getDecorView();
+        if (on) {
+            if (Build.VERSION.SDK_INT >= 30) {
+                getWindow().setDecorFitsSystemWindows(false);
+                WindowInsetsController c = getWindow().getInsetsController();
+                if (c != null) {
+                    c.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                    c.setSystemBarsBehavior(
+                            WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                }
+            } else {
+                decor.setSystemUiVisibility(
+                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+            }
+        } else {
+            if (Build.VERSION.SDK_INT >= 30) {
+                WindowInsetsController c = getWindow().getInsetsController();
+                if (c != null) {
+                    c.show(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                }
+                getWindow().setDecorFitsSystemWindows(true);
+            } else {
+                decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+            }
         }
     }
 
@@ -418,22 +519,13 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void exitFullscreen() {
-        if (customView == null) return;
-        if (customViewCallback != null) customViewCallback.onCustomViewHidden();
-        customView = null;
-        customViewCallback = null;
-        fullscreenContainer.removeAllViews();
-        fullscreenContainer.setVisibility(View.GONE);
-        webView.setVisibility(View.VISIBLE);
-        // 退出全屏后恢复系统的自动旋转
-        setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-        applyKeepScreenOn(videoPlaying);
-    }
-
     @Override
     public void onBackPressed() {
-        if (customView != null) { exitFullscreen(); return; }
+        // 页面内全屏时，返回键先退出全屏
+        if (jsFullscreen && webView != null) {
+            webView.evaluateJavascript("(window.__vbExitFs?window.__vbExitFs():0)", null);
+            return;
+        }
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
         } else {
@@ -443,7 +535,6 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        if (customView != null) exitFullscreen();
         if (webView != null) webView.destroy();
         super.onDestroy();
     }
