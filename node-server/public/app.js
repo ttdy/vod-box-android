@@ -221,7 +221,7 @@
     proToggle.addEventListener('click', () => { location.href = PRO_MODE ? '/' : '/aaa'; });
   }
 
-  const views = { home: $('#home'), detail: $('#detail'), history: $('#history') };
+  const views = { home: $('#home'), detail: $('#detail'), history: $('#history'), favorites: $('#favorites') };
 
   // ---------- 历史 ----------
   function loadHistory() {
@@ -248,6 +248,26 @@
   function findHistory(id, src) {
     const list = loadHistory().filter((h) => h.id === id && h.src === src);
     return list.length ? list[0] : null;
+  }
+
+  // ---------- 收藏 ----------
+  const FAV_KEY = 'vb_favorites_v1';
+  function loadFavorites() {
+    try { return JSON.parse(localStorage.getItem(FAV_KEY) || '[]'); } catch (e) { return []; }
+  }
+  function saveFavorites(list) {
+    localStorage.setItem(FAV_KEY, JSON.stringify(list.slice(0, 200)));
+  }
+  function isFavorited(id, src) {
+    return loadFavorites().some((f) => f.id === id && f.src === src);
+  }
+  function addFavorite(rec) {
+    const list = loadFavorites().filter((f) => !(f.id === rec.id && f.src === rec.src));
+    list.unshift(Object.assign({ addedAt: Date.now() }, rec));
+    saveFavorites(list);
+  }
+  function removeFavorite(id, src) {
+    saveFavorites(loadFavorites().filter((f) => !(f.id === id && f.src === src)));
   }
 
   // ---------- 视图 ----------
@@ -480,8 +500,11 @@
       state.actEp = -1;
       renderDetail();
       // 自动续播
-      if (auto.play && state.plays.length && state.plays[0].eps.length) {
-        playEpisode(state.actFrom, auto.epIndex >= 0 ? auto.epIndex : 0, auto.seek || 0, true);
+      if (auto.play && state.plays.length) {
+        const from = (auto.from >= 0 && auto.from < state.plays.length) ? auto.from : 0;
+        if (state.plays[from].eps.length) {
+          playEpisode(from, auto.epIndex >= 0 ? auto.epIndex : 0, auto.seek || 0, true);
+        }
       }
     } catch (e) {
       $('#playerTip').textContent = '加载失败，请重试';
@@ -520,27 +543,52 @@
   function renderEpBlock(h) {
     const box = $('#epBlock');
     if (!state.plays.length) { box.innerHTML = ''; return; }
-    let html = '';
-    if (state.plays.length > 1) {
-      html += `<div class="ep-srcs">` + state.plays.map((p, i) =>
-        `<button class="${i === state.actFrom ? 'on' : ''}" data-from="${i}">${escapeHtml(p.from)}</button>`).join('') + `</div>`;
-    }
+    const faved = isFavorited(state.detail.vod_id, state.src);
+    const srcBtns = state.plays.length > 1
+      ? state.plays.map((p, i) =>
+          `<button class="src-btn ${i === state.actFrom ? 'on' : ''}" data-from="${i}">${escapeHtml(p.from)}</button>`).join('')
+      : '';
+    const favBtnHtml = `<button id="favEpBtn" class="fav-btn ${faved ? 'on' : ''}">${faved ? '★ 已收藏' : '☆ 收藏'}</button>`;
+    let html = `<div class="ep-srcs">${srcBtns}${favBtnHtml}</div>`;
     const eps = state.plays[state.actFrom].eps;
     html += `<h3>共 ${eps.length} 集</h3><div class="ep-list">` +
       eps.map((e, i) =>
         `<button class="${i === state.actEp ? 'on' : ''}" data-ep="${i}" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</button>`).join('') +
       `</div>`;
     box.innerHTML = html;
-    box.querySelectorAll('.ep-srcs button').forEach((b) => {
+    box.querySelectorAll('.ep-srcs .src-btn').forEach((b) => {
       b.addEventListener('click', () => {
         state.actFrom = +b.dataset.from;
         state.actEp = -1;
         renderEpBlock(h);
       });
     });
+    const favEpBtn = box.querySelector('#favEpBtn');
+    if (favEpBtn) favEpBtn.addEventListener('click', toggleCurrentFavorite);
     box.querySelectorAll('.ep-list button').forEach((b) => {
       b.addEventListener('click', () => playEpisode(state.actFrom, +b.dataset.ep, 0, false));
     });
+  }
+
+  // 收藏/取消收藏当前影片（含正在播放的线路与剧集地址）
+  function toggleCurrentFavorite() {
+    const v = state.detail;
+    if (!v) return;
+    const id = v.vod_id, src = state.src;
+    if (isFavorited(id, src)) {
+      removeFavorite(id, src);
+    } else {
+      const p = state.plays[state.actFrom];
+      const ep = (p && state.actEp >= 0) ? p.eps[state.actEp] : null;
+      addFavorite({
+        id, src,
+        name: v.vod_name, pic: v.vod_pic, remarks: v.vod_remarks,
+        from: p ? p.from : '',
+        actFrom: state.actFrom, epIndex: state.actEp,
+        epName: ep ? ep.name : '', epUrl: ep ? ep.url : '',
+      });
+    }
+    renderEpBlock(findHistory(id, src));
   }
 
   async function playEpisode(fromIdx, epIdx, seek, forceSeek) {
@@ -654,7 +702,49 @@
         localStorage.setItem('vb_src', src);
         loadCats();
         const h = findHistory(id, src);
-        openDetail(id, { play: true, epIndex: h.epIndex, seek: h.time });
+        openDetail(id, { play: true, from: h.actFrom || 0, epIndex: h.epIndex, seek: h.time });
+      });
+    });
+  }
+
+  // ---------- 收藏视图 ----------
+  function renderFavorites() {
+    const list = loadFavorites().sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+    const g = $('#favGrid');
+    $('#favEmpty').hidden = list.length > 0;
+    g.innerHTML = list.map((f) => {
+      const s = state.sources.find((x) => x.key === f.src);
+      const srcName = (s && s.name) || f.src;
+      return `<div class="card" data-i="${f.id}|${f.src}">
+        <div class="poster"><span class="src-tag">${escapeHtml(srcName)}</span><img src="${posterUrl(f.pic)}" loading="lazy" onerror="this.remove()"></div>
+        <button class="fav-del" data-del="${f.id}|${f.src}" title="取消收藏">✕</button>
+        <div class="meta">
+          <div class="name">${escapeHtml(f.name)}</div>
+          <div class="sub">${escapeHtml(f.epName || '')}${f.remarks ? (f.epName ? ' · ' : '') + escapeHtml(f.remarks) : ''}</div>
+        </div>
+      </div>`;
+    }).join('');
+    g.querySelectorAll('.card').forEach((el) => {
+      el.addEventListener('click', () => {
+        const [id, src] = el.dataset.i.split('|');
+        state.src = src;
+        $('#srcSel').value = src;
+        localStorage.setItem('vb_src', src);
+        loadCats();
+        const f = loadFavorites().find((x) => x.id === id && x.src === src);
+        openDetail(id, {
+          play: true,
+          from: f && f.actFrom >= 0 ? f.actFrom : 0,
+          epIndex: f && f.epIndex >= 0 ? f.epIndex : 0,
+        }, src);
+      });
+    });
+    g.querySelectorAll('.fav-del').forEach((d) => {
+      d.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const [id, src] = d.dataset.del.split('|');
+        removeFavorite(id, src);
+        renderFavorites();
       });
     });
   }
@@ -733,6 +823,11 @@
   $('#historyBtn').addEventListener('click', () => { renderHistory(); showView('history'); });
   $('#clearHistoryBtn').addEventListener('click', () => {
     if (confirm('确定清空全部播放历史吗？')) { saveHistoryList([]); renderHistory(); }
+  });
+  $('#favBtn').addEventListener('click', () => { renderFavorites(); showView('favorites'); });
+  $('#backFavBtn').addEventListener('click', () => { showView('home'); renderGrid(state.list); });
+  $('#clearFavBtn').addEventListener('click', () => {
+    if (confirm('确定清空全部收藏吗？')) { saveFavorites([]); renderFavorites(); }
   });
   $('#resumeBtn').addEventListener('click', () => {
     const h = findHistory(state.detail.vod_id, state.src);
