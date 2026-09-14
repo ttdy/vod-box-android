@@ -19,10 +19,12 @@
     actEp: -1,
   };
 
-  const HISTORY_KEY = 'vb_history_v1';
   const $ = (s) => document.querySelector(s);
 
   const PRO_MODE = /^\/aaa(\/|$)/.test(location.pathname);
+  const MODE_SUFFIX = PRO_MODE ? '_pro' : '';          // 普通区/高级区数据分开
+  const HISTORY_KEY = 'vb_history_v1' + MODE_SUFFIX;
+  const FAV_KEY = 'vb_favorites_v1' + MODE_SUFFIX;
   const API_QM = PRO_MODE ? '&mode=pro&pwd=' + encodeURIComponent(localStorage.getItem('vb_pro_pwd') || '') : '';
   const API_Q0 = PRO_MODE ? '?mode=pro&pwd=' + encodeURIComponent(localStorage.getItem('vb_pro_pwd') || '') : '';
 
@@ -211,7 +213,8 @@
     video.addEventListener('touchcancel', end);
   })();
   let hls = null;
-  let resumeSeek = null;   // 需要恢复的秒数
+  let resumePending = 0;   // 需要恢复的目标秒数
+  let resumeTries = 0;     // 已尝试恢复的次数
   let lastSave = 0;
   let saveTimer = null;
   // 顶部切换：普通区 / 高级区(/aaa)
@@ -228,7 +231,7 @@
     try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch (e) { return []; }
   }
   function saveHistoryList(list) {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, 100)));
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, 30)));
   }
   function addHistory(rec) {
     const list = loadHistory().filter((h) => !(h.id === rec.id && h.src === rec.src && h.epIndex === rec.epIndex));
@@ -251,7 +254,6 @@
   }
 
   // ---------- 收藏 ----------
-  const FAV_KEY = 'vb_favorites_v1';
   function loadFavorites() {
     try { return JSON.parse(localStorage.getItem(FAV_KEY) || '[]'); } catch (e) { return []; }
   }
@@ -301,6 +303,7 @@
     video.removeAttribute('src');
     video.load();
     state.actEp = -1;
+    resumePending = 0;
     $('#playerTip').classList.add('hide');
   }
 
@@ -604,7 +607,6 @@
       const r = await fetch('/api/resolve?u=' + encodeURIComponent(ep.url));
       if (!r.ok) throw new Error('bad');
       const rv = await r.json();
-      resumeSeek = forceSeek ? seek : 0;
       addHistory({
         id: state.detail.vod_id, src: state.src,
         name: state.detail.vod_name, pic: state.detail.vod_pic,
@@ -620,7 +622,8 @@
 
   function loadVideo(url, type, seek) {
     destroyHls();
-    resumeSeek = seek > 0 ? seek : null;
+    resumePending = seek > 0 ? seek : 0;
+    resumeTries = 0;
     const streamUrl = '/api/stream?u=' + encodeURIComponent(url);
     $('#playerTip').classList.remove('hide');
     $('#playerTip').textContent = '加载播放地址…';
@@ -656,13 +659,18 @@
     if (hls) { try { hls.destroy(); } catch (e) {} hls = null; }
   }
 
-  // 恢复进度
-  video.addEventListener('loadedmetadata', () => {
-    if (resumeSeek && resumeSeek > 0 && resumeSeek < (video.duration - 5)) {
-      video.currentTime = resumeSeek;
-    }
-    resumeSeek = null;
-  });
+  // 恢复进度：metadata/canplay/playing 等阶段重试，避免流未就绪时 seek 被忽略
+  function tryResumeSeek() {
+    if (resumePending <= 0) return;
+    if (video.readyState < 1) return;
+    const d = video.duration;
+    let target = resumePending;
+    if (isFinite(d) && d > 0) target = Math.min(target, Math.max(0, d - 3));
+    try { video.currentTime = target; } catch (e) { return; }
+    if (Math.abs(video.currentTime - target) < 1.5 || ++resumeTries >= 8) resumePending = 0;
+  }
+  ['loadedmetadata', 'loadeddata', 'canplay', 'playing', 'timeupdate'].forEach((ev) =>
+    video.addEventListener(ev, tryResumeSeek));
 
   // 记录播放历史进度（节流）
   video.addEventListener('timeupdate', () => {
