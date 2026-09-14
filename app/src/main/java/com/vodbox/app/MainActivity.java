@@ -213,7 +213,7 @@ public class MainActivity extends Activity {
                     } else if (landscape == 0) {
                         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
                     }
-                    setImmersive(true);
+                    applyImmersive(true);
                 }
             });
         }
@@ -224,7 +224,7 @@ public class MainActivity extends Activity {
                 @Override
                 public void run() {
                     jsFullscreen = false;
-                    setImmersive(false);
+                    applyImmersive(false);
                     setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
                     WindowManager.LayoutParams lp = getWindow().getAttributes();
                     lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
@@ -281,7 +281,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void setImmersive(boolean on) {
+    private void applyImmersive(boolean on) {
         View decor = getWindow().getDecorView();
         if (on) {
             if (Build.VERSION.SDK_INT >= 30) {
