@@ -519,13 +519,6 @@
     const v = state.detail;
     const h = findHistory(v.vod_id, state.src);
     $('#dTitle').textContent = v.vod_name;
-    const resume = $('#resumeBtn');
-    if (h && h.epIndex >= 0 && state.plays.length && state.plays[h.actFrom || 0] && state.plays[h.actFrom || 0].eps[h.epIndex]) {
-      resume.hidden = false;
-      resume.textContent = `▶ 继续播放 · ${state.plays[h.actFrom || 0].eps[h.epIndex].name}${h.time ? ' ' + fmtTime(h.time) : ''}`;
-    } else {
-      resume.hidden = true;
-    }
     $('#dInfo').innerHTML = `
       <div class="row">
         <img class="poster-sm" src="${posterUrl(v.vod_pic)}" onerror="this.remove()">
@@ -837,14 +830,6 @@
   $('#clearFavBtn').addEventListener('click', () => {
     if (confirm('确定清空全部收藏吗？')) { saveFavorites([]); renderFavorites(); }
   });
-  $('#resumeBtn').addEventListener('click', () => {
-    const h = findHistory(state.detail.vod_id, state.src);
-    if (h && state.plays[h.actFrom || 0] && state.plays[h.actFrom || 0].eps[h.epIndex]) {
-      state.actFrom = h.actFrom || 0;
-      playEpisode(state.actFrom, h.epIndex, h.time || 0, true);
-    }
-  });
-
   // ---------- 启动 ----------
   async function init() {
     await loadSources();
