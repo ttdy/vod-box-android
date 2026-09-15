@@ -26,6 +26,8 @@ jobs:
           echo "/opt/gradle-8.9/bin" >> "$GITHUB_PATH"
 
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
 
       - name: 安装 Android SDK 组件
         run: |
