@@ -31,7 +31,8 @@ android {
             buildConfigField "String", "UPDATE_JSON_URL", '"https://ttdy.github.io/update.json"'
         }
         // 连点版：隐藏按钮，连续点击左上角「聚合影院」3 次后输入密码进入
-        tap {
+        // 名称用 tapin，避免与 Groovy GDK 的 Object.tap() 方法冲突
+        tapin {
             dimension "entry"
             applicationIdSuffix ".tap"
             buildConfigField "String", "UPDATE_JSON_URL", '"https://ttdy.github.io/update-tap.json"'
@@ -78,11 +79,14 @@ android {
 }
 
 // 主版本（button）产物沿用历史文件名 app-<abi>-release.apk，保证老版本 App 的升级地址不变；
-// 连点版（tap）保留 app-tap-<abi>-release.apk。
+// 连点版（tapin）对外统一为 app-tap-<abi>-release.apk。
 android.applicationVariants.all { variant ->
     variant.outputs.all { output ->
-        if (output.outputFileName.startsWith('app-button-')) {
-            output.outputFileName = output.outputFileName.replace('app-button-', 'app-')
+        def fn = output.outputFileName
+        if (fn.startsWith('app-button-')) {
+            output.outputFileName = fn.replace('app-button-', 'app-')
+        } else if (fn.startsWith('app-tapin-')) {
+            output.outputFileName = fn.replace('app-tapin-', 'app-tap-')
         }
     }
 }
