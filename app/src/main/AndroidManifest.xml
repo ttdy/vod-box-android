@@ -13,7 +13,7 @@
         android:supportsRtl="true">
         <provider
             android:name=".UpdateFileProvider"
-            android:authorities="com.vodbox.app.updatefile"
+            android:authorities="${applicationId}.updatefile"
             android:exported="false"
             android:grantUriPermissions="true" />
         <activity

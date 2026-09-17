@@ -20,6 +20,23 @@ android {
             }
         }
     }
+    buildFeatures {
+        buildConfig true
+    }
+    flavorDimensions "entry"
+    productFlavors {
+        // 主版本：界面保留「高级」按钮进入高级功能
+        button {
+            dimension "entry"
+            buildConfigField "String", "UPDATE_JSON_URL", '"https://ttdy.github.io/update.json"'
+        }
+        // 连点版：隐藏按钮，连续点击左上角「聚合影院」3 次后输入密码进入
+        tap {
+            dimension "entry"
+            applicationIdSuffix ".tap"
+            buildConfigField "String", "UPDATE_JSON_URL", '"https://ttdy.github.io/update-tap.json"'
+        }
+    }
     splits {
         abi {
             enable true
@@ -56,6 +73,16 @@ android {
     sourceSets {
         main {
             jniLibs.srcDirs 'libnode/bin/'
+        }
+    }
+}
+
+// 主版本（button）产物沿用历史文件名 app-<abi>-release.apk，保证老版本 App 的升级地址不变；
+// 连点版（tap）保留 app-tap-<abi>-release.apk。
+android.applicationVariants.all { variant ->
+    variant.outputs.all { output ->
+        if (output.outputFileName.startsWith('app-button-')) {
+            output.outputFileName = output.outputFileName.replace('app-button-', 'app-')
         }
     }
 }

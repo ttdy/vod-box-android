@@ -219,9 +219,26 @@
   let saveTimer = null;
   // 顶部切换：普通区 / 高级区(/aaa)
   const proToggle = document.getElementById('proToggle');
+  const goPro = () => { location.href = PRO_MODE ? '/' : '/aaa'; };
   if (proToggle) {
     proToggle.textContent = PRO_MODE ? '普通' : '高级';
-    proToggle.addEventListener('click', () => { location.href = PRO_MODE ? '/' : '/aaa'; });
+    proToggle.addEventListener('click', goPro);
+  } else {
+    const brand = document.getElementById('brand');
+    if (brand) {
+      let taps = 0;
+      let tapTimer = null;
+      brand.addEventListener('click', () => {
+        taps++;
+        if (tapTimer) clearTimeout(tapTimer);
+        tapTimer = setTimeout(() => { taps = 0; }, 1200);
+        if (taps >= 3) {
+          taps = 0;
+          clearTimeout(tapTimer);
+          goPro();
+        }
+      });
+    }
   }
 
   const views = { home: $('#home'), detail: $('#detail'), history: $('#history'), favorites: $('#favorites') };
