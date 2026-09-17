@@ -50,25 +50,29 @@ jobs:
           VODBOX_KEYSTORE_PASS: ${{ secrets.VODBOX_KEYSTORE_PASS }}
         run: gradle assembleRelease --no-daemon
 
-      - name: 校验 APK 产物命名（兜底主版历史文件名）
+      - name: 整理 APK 产物（统一文件名）
         run: |
           set -e
-          cd app/build/outputs/apk/release
-          for abi in arm64-v8a armeabi-v7a; do
-            if [ ! -f "app-$abi-release.apk" ] && [ -f "app-button-$abi-release.apk" ]; then
-              cp "app-button-$abi-release.apk" "app-$abi-release.apk"
-            fi
-            if [ ! -f "app-tap-$abi-release.apk" ] && [ -f "app-tapin-$abi-release.apk" ]; then
-              cp "app-tapin-$abi-release.apk" "app-tap-$abi-release.apk"
-            fi
+          mkdir -p /tmp/apks
+          for dir in button tapin; do
+            for f in app/build/outputs/apk/$dir/release/*.apk; do
+              [ -e "$f" ] || continue
+              b=$(basename "$f")
+              if [ "$dir" = "button" ]; then
+                b="${b/app-button-/app-}"
+              else
+                b="${b/app-tapin-/app-tap-}"
+              fi
+              cp "$f" "/tmp/apks/$b"
+            done
           done
-          ls -l *.apk
+          ls -l /tmp/apks
 
       - name: 上传 APK 产物
         uses: actions/upload-artifact@v4
         with:
           name: vod-box-android-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: /tmp/apks/*.apk
 
       - name: 发布 GitHub Release（作为升级下载源）
         env:
@@ -77,7 +81,7 @@ jobs:
           VERSION=$(grep -m1 'versionName' app/build.gradle | sed -E 's/.*"([0-9.]+)".*/\1/')
           TAG="v${VERSION}"
           NOTE=$(git log -1 --pretty=%B | sed '/^$/d' | tr '\n' ' ' | cut -c1-200)
-          APKS=(app/build/outputs/apk/release/*.apk)
+          APKS=(/tmp/apks/*.apk)
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "${NOTE:-自动构建产物}" >/dev/null 2>&1 || true
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${APKS[@]}"
