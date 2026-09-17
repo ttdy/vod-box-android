@@ -58,9 +58,6 @@ jobs:
             if [ ! -f "app-$abi-release.apk" ] && [ -f "app-button-$abi-release.apk" ]; then
               cp "app-button-$abi-release.apk" "app-$abi-release.apk"
             fi
-            if [ ! -f "app-tap-$abi-release.apk" ] && [ -f "app-tapin-$abi-release.apk" ]; then
-              cp "app-tapin-$abi-release.apk" "app-tap-$abi-release.apk"
-            fi
           done
           ls -l *.apk
 
