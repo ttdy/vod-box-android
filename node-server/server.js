@@ -81,6 +81,22 @@ const _cfg = parseConfig(readLocalConfig());
 let SOURCES = Object.assign({}, DEFAULT_SOURCES, _cfg.sources);
 const REMOTE_CONFIG_URL = _cfg.remoteConfigUrl;
 
+// 移动网络下运营商可能对采集站/媒体域名做 TLS 阻断：直连失败时自动回退到 CF 中转
+const RELAY_URL = 'https://dmn.cc.cd/api/relay';
+const RELAY_TOKEN = 'vb-relay-7c41f0a9';
+
+function isPublicHttpUrl(u) {
+  if (!/^https?:\/\//i.test(u)) return false;
+  return !/^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(u);
+}
+
+function relayFor(target, referer) {
+  const sep = RELAY_URL.includes('?') ? '&' : '?';
+  return RELAY_URL + sep + 'token=' + encodeURIComponent(RELAY_TOKEN)
+    + '&u=' + encodeURIComponent(target)
+    + (referer ? '&ref=' + encodeURIComponent(referer) : '');
+}
+
 // 远程配置刷新（依赖下方 fetchText，调用时机晚于其定义即可）
 let _remoteFetchedAt = 0;
 let _remoteReady = false;
@@ -150,7 +166,7 @@ let SOURCES_PRO = Object.assign({}, DEFAULT_SOURCES_PRO, _cfg.sourcesPro);
 // ---------- 基础工具 ----------
 const agent = new https.Agent({ keepAlive: true, maxSockets: 64 });
 
-function fetchBuf(url, { referer, timeout = 15000, headers = {} } = {}) {
+function fetchBufDirect(url, { referer, timeout = 15000, headers = {} } = {}) {
   const u = new URL(url);
   const mod = u.protocol === 'https:' ? https : http;
   const opts = {
@@ -169,7 +185,7 @@ function fetchBuf(url, { referer, timeout = 15000, headers = {} } = {}) {
       if (code >= 300 && code < 400 && res.headers.location) {
         const next = new URL(res.headers.location, u).toString();
         res.resume();
-        return fetchBuf(next, { referer, timeout, headers }).then(resolve, reject);
+        return fetchBufDirect(next, { referer, timeout, headers }).then(resolve, reject);
       }
       if (code >= 400) {
         res.resume();
@@ -183,6 +199,16 @@ function fetchBuf(url, { referer, timeout = 15000, headers = {} } = {}) {
     req.on('error', reject);
     req.end();
   });
+}
+
+// 直连失败（运营商 TLS 阻断 / 超时 / 错误状态）时，自动经 CF 中转重试
+async function fetchBuf(url, opts = {}) {
+  try {
+    return await fetchBufDirect(url, opts);
+  } catch (e) {
+    if (!isPublicHttpUrl(url) || url.startsWith(RELAY_URL)) throw e;
+    return await fetchBufDirect(relayFor(url, opts.referer), { timeout: opts.timeout || 15000 });
+  }
 }
 
 const fetchText = async (url, o = {}) => (await fetchBuf(url, o)).toString('utf8');
@@ -349,6 +375,28 @@ async function resolvePlayUrl(rawUrl, refererHost) {
 }
 
 // ---------- 流媒体代理 ----------
+// 直连失败时经 CF 中转重试（移动网络下媒体域名可能被运营商阻断）
+function relayMedia(res, url, referer, extra) {
+  const target = relayFor(url, referer);
+  const ru = new URL(target);
+  const mod = ru.protocol === 'https:' ? https : http;
+  const headers = { 'User-Agent': UA, 'Accept': '*/*' };
+  if (extra && extra.Range) headers['Range'] = extra.Range;
+  const req = mod.request(ru, { headers, method: 'GET', agent: ru.protocol === 'https:' ? agent : undefined }, (pRes) => {
+    if ((pRes.statusCode || 0) >= 400) { pRes.resume(); try { res.status(502).send('relay stream error'); } catch (e) {} return; }
+    res.statusCode = pRes.statusCode || 200;
+    for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control']) {
+      if (pRes.headers[h]) res.setHeader(h, pRes.headers[h]);
+    }
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    pRes.pipe(res);
+    pRes.on('error', () => { try { res.destroy(); } catch (e) {} });
+  });
+  req.setTimeout(45000, () => req.destroy(new Error('timeout')));
+  req.on('error', () => { try { res.status(502).send('relay stream error'); } catch (e) {} });
+  req.end();
+}
+
 function proxyMedia(res, url, referer, extra) {
   const u = new URL(url);
   const mod = u.protocol === 'https:' ? https : http;
@@ -359,7 +407,16 @@ function proxyMedia(res, url, referer, extra) {
   };
   if (referer) headers['Referer'] = referer;
   if (extra && extra.Range) headers['Range'] = extra.Range;
+  let settled = false;
+  const fallback = () => {
+    if (settled) return;
+    settled = true;
+    if (!isPublicHttpUrl(url)) { try { res.status(502).send('stream error'); } catch (e) {} return; }
+    relayMedia(res, url, referer, extra);
+  };
   const req = mod.request(u, { headers, method: 'GET', agent: u.protocol === 'https:' ? agent : undefined }, (pRes) => {
+    if ((pRes.statusCode || 0) >= 400) { pRes.resume(); fallback(); return; }
+    settled = true;
     res.statusCode = pRes.statusCode || 200;
     for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control']) {
       if (pRes.headers[h]) res.setHeader(h, pRes.headers[h]);
@@ -370,7 +427,7 @@ function proxyMedia(res, url, referer, extra) {
     pRes.on('error', () => { try { res.destroy(); } catch (e) {} });
   });
   req.setTimeout(30000, () => req.destroy(new Error('timeout')));
-  req.on('error', () => { try { res.status(502).send('stream error'); } catch (e) {} });
+  req.on('error', fallback);
   req.end();
 }
 
