@@ -50,17 +50,6 @@ jobs:
           VODBOX_KEYSTORE_PASS: ${{ secrets.VODBOX_KEYSTORE_PASS }}
         run: gradle assembleRelease --no-daemon
 
-      - name: 校验 APK 产物命名（兜底主版历史文件名）
-        run: |
-          set -e
-          cd app/build/outputs/apk/release
-          for abi in arm64-v8a armeabi-v7a; do
-            if [ ! -f "app-$abi-release.apk" ] && [ -f "app-button-$abi-release.apk" ]; then
-              cp "app-button-$abi-release.apk" "app-$abi-release.apk"
-            fi
-          done
-          ls -l *.apk
-
       - name: 上传 APK 产物
         uses: actions/upload-artifact@v4
         with:
@@ -100,10 +89,9 @@ jobs:
           cd /tmp/pages-site
           BASE="https://github.com/ttdy/vod-box-android/releases/latest/download/"
           jq -n --argjson vc "$VCODE" --arg v "$VERSION" --arg note "$NOTE" --arg b "$BASE" '{versionCode:$vc, versionName:$v, note:$note, apk:($b+"app-arm64-v8a-release.apk"), apkArm64:($b+"app-arm64-v8a-release.apk"), apkArm:($b+"app-armeabi-v7a-release.apk")}' > update.json
-          jq -n --argjson vc "$VCODE" --arg v "$VERSION" --arg note "${NOTE}（连点版）" --arg b "$BASE" '{versionCode:$vc, versionName:$v, note:$note, apk:($b+"app-tap-arm64-v8a-release.apk"), apkArm64:($b+"app-tap-arm64-v8a-release.apk"), apkArm:($b+"app-tap-armeabi-v7a-release.apk")}' > update-tap.json
           git config user.name "vod-box-ci"
           git config user.email "ci@vod-box.local"
-          git add update.json update-tap.json
+          git add update.json
           if git diff --cached --quiet; then
             echo "update.json 无变化，跳过推送"
           else

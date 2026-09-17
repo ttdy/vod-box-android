@@ -48,7 +48,7 @@ import java.net.URL;
 public class MainActivity extends Activity {
 
     private static final String NODE_URL = "http://127.0.0.1:3000/";
-    private static final String UPDATE_JSON_URL = BuildConfig.UPDATE_JSON_URL;
+    private static final String UPDATE_JSON_URL = "https://ttdy.github.io/update.json";
 
     static {
         System.loadLibrary("native-lib");
@@ -76,7 +76,7 @@ public class MainActivity extends Activity {
             "})();";
 
     // 更新检测相关
-    private static final String UPDATE_FILE_AUTHORITY = BuildConfig.APPLICATION_ID + ".updatefile";
+    private static final String UPDATE_FILE_AUTHORITY = "com.vodbox.app.updatefile";
 
     public native Integer startNodeWithArguments(String[] arguments);
 
