@@ -47,19 +47,20 @@ const DEFAULT_SOURCES = {
 
 // ---------- 配置解析 ----------
 // config.json 顶层：源 key -> {name,api,format,cats}；可选控制键：
-//   remoteConfigUrl : 外部接口配置(json)链接，服务启动/每60秒拉取，拉取成功即覆盖本地源（失败沿用本地）
+//   remoteConfigUrl : 外部接口配置(json)链接，服务启动/每60秒拉取，拉取成功即覆盖本地源（失败沿用本地）；可填字符串或数组，数组按顺序回退
 //   _pro            : { 源key -> {...} }，用于高级模式(/aaa 或 mode=pro)的采集源
 function isSource(v) {
   return !!v && typeof v === 'object' && typeof v.api === 'string';
 }
 
 function parseConfig(raw) {
-  const out = { remoteConfigUrl: '', sources: {}, sourcesPro: {} };
+  const out = { remoteConfigUrls: [], sources: {}, sourcesPro: {} };
   if (!raw || typeof raw !== 'object') return out;
   for (const k of Object.keys(raw)) {
     const v = raw[k];
     if (k === 'remoteConfigUrl') {
-      if (typeof v === 'string') out.remoteConfigUrl = v.trim();
+      const add = (one) => { if (typeof one === 'string' && one.trim()) out.remoteConfigUrls.push(one.trim()); };
+      if (Array.isArray(v)) v.forEach(add); else add(v);
     } else if (k === '_pro' && v && typeof v === 'object') {
       for (const pk of Object.keys(v)) if (isSource(v[pk])) out.sourcesPro[pk] = v[pk];
     } else if (isSource(v)) {
@@ -79,7 +80,7 @@ function readLocalConfig() {
 
 const _cfg = parseConfig(readLocalConfig());
 let SOURCES = Object.assign({}, DEFAULT_SOURCES, _cfg.sources);
-const REMOTE_CONFIG_URL = _cfg.remoteConfigUrl;
+const REMOTE_CONFIG_URLS = _cfg.remoteConfigUrls;
 
 // 移动网络下运营商可能对采集站/媒体域名做 TLS 阻断，且部分域名后缀会被整体限制：
 // 直连失败时自动回退到 CF 中转，中转按以下域名顺序尝试（CC.CD 后缀已被运营商限制，故不列入）
@@ -126,31 +127,35 @@ function markRelayOk(u) {
 let _remoteFetchedAt = 0;
 let _remoteReady = false;
 let _remoteInflight = null;
-const REMOTE_REFRESH_MS = 60 * 1000;
+const REMOTE_REFRESH_MS = 60 * 1000;             // 拉取失败后的重试间隔
+const REMOTE_REFRESH_OK_MS = 10 * 60 * 1000;     // 拉取成功后的刷新间隔
 
 async function refreshFromRemote(force) {
-  if (!REMOTE_CONFIG_URL) return _remoteReady;
+  if (!REMOTE_CONFIG_URLS.length) return _remoteReady;
   const now = Date.now();
-  // 非强制：远程已就绪且 60 秒内刚拉过则直接返回，避免每个请求都访问远程
-  if (!force && _remoteReady && now - _remoteFetchedAt < REMOTE_REFRESH_MS) return true;
+  // 非强制：远程已就绪且未到刷新间隔则直接返回，避免每个请求都访问远程
+  if (!force && _remoteReady && now - _remoteFetchedAt < REMOTE_REFRESH_OK_MS) return true;
   // 有进行中的拉取则复用之，防止并发
   if (_remoteInflight) return _remoteInflight;
   _remoteInflight = (async () => {
-    try {
-      const txt = await fetchText(REMOTE_CONFIG_URL, { timeout: 8000 });
-      const rem = parseConfig(JSON.parse(txt));
-      // 远程配置为权威：远程提供的源集合整体替换本地；某集合为空时保留本地兜底
-      if (Object.keys(rem.sources).length) SOURCES = rem.sources;
-      if (Object.keys(rem.sourcesPro).length) SOURCES_PRO = rem.sourcesPro;
-      _remoteFetchedAt = Date.now();
-      _remoteReady = true;
-      console.log(`[config] 远程接口配置已生效(${Object.keys(rem.sources).length} 个源): ${REMOTE_CONFIG_URL}`);
-      return true;
-    } catch (e) {
-      console.error(`[config] 远程配置拉取失败，沿用本地: ${e.message}`);
-      _remoteFetchedAt = Date.now();
-      return false;
+    for (const rcUrl of REMOTE_CONFIG_URLS) {
+      try {
+        const txt = await fetchText(rcUrl, { timeout: 8000 });
+        const rem = parseConfig(JSON.parse(txt));
+        // 远程配置为权威：远程提供的源集合整体替换本地；某集合为空时保留本地兜底
+        if (Object.keys(rem.sources).length) SOURCES = rem.sources;
+        if (Object.keys(rem.sourcesPro).length) SOURCES_PRO = rem.sourcesPro;
+        _remoteFetchedAt = Date.now();
+        _remoteReady = true;
+        console.log(`[config] 远程接口配置已生效(${Object.keys(rem.sources).length} 个源): ${rcUrl}`);
+        return true;
+      } catch (e) {
+        console.error(`[config] 远程配置拉取失败(${rcUrl})，尝试备用: ${e.message}`);
+      }
     }
+    _remoteFetchedAt = Date.now();
+    console.error('[config] 全部远程配置地址均失败，沿用本地');
+    return false;
   })();
   try {
     return await _remoteInflight;
@@ -160,9 +165,13 @@ async function refreshFromRemote(force) {
 }
 
 function startRemoteConfigRefresh() {
-  if (!REMOTE_CONFIG_URL) return;
-  refreshFromRemote(true);
-  setInterval(() => refreshFromRemote(true), REMOTE_REFRESH_MS);
+  if (!REMOTE_CONFIG_URLS.length) return;
+  const tick = () => {
+    refreshFromRemote(true).then(() => {
+      setTimeout(tick, _remoteReady ? REMOTE_REFRESH_OK_MS : REMOTE_REFRESH_MS);
+    });
+  };
+  tick();
 }
 
 // ---------- 高级模式采集源（/aaa 路径，如意接口）----------
@@ -524,7 +533,7 @@ function proAuthed(q) { return q.mode !== 'pro' || q.pwd === PRO_PWD; }
 // 网站打开时优先远程接口：配置了 remoteConfigUrl 时，首个 /api 请求会先等待远程拉取完成
 // （成功即远程源优先展示，失败/超时则沿用本地 config.json，不阻塞后续访问）
 app.use('/api', async (req, res, next) => {
-  if (!REMOTE_CONFIG_URL) return next();
+  if (!REMOTE_CONFIG_URLS.length) return next();
   try { await refreshFromRemote(false); } catch (e) {}
   next();
 });
