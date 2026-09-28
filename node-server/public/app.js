@@ -920,22 +920,27 @@
     if (modal) modal.hidden = false;
   }
 
-  const syncBtn = document.getElementById('syncBtn');
-  if (syncBtn) syncBtn.addEventListener('click', syncOpenPanel);
-  const syncCloseBtn = document.getElementById('syncCloseBtn');
-  if (syncCloseBtn) syncCloseBtn.addEventListener('click', () => { const m = document.getElementById('syncModal'); if (m) m.hidden = true; });
-  const syncSaveBtn = document.getElementById('syncSaveBtn');
-  if (syncSaveBtn) syncSaveBtn.addEventListener('click', async () => {
+  async function syncSave() {
     const input = document.getElementById('syncCodeInput');
     const code = (input ? input.value : '').trim();
     if (code.length < 4) { syncSetStatus('同步码至少 4 位', false); return; }
     localStorage.setItem(SYNC_CODE_KEY, code);
     localStorage.setItem(SYNC_ON_KEY, '1');
     syncSetStatus('正在同步…', true);
-    await syncPull(false);
-    await syncPush();
+    const ok = await syncPull(false);
+    if (ok) await syncPush();
     const m = document.getElementById('syncModal');
     if (m) m.hidden = true;
+  }
+
+  // 事件委托：脚本可能早于弹窗插入 DOM 执行，直接绑定会绑不上
+  document.addEventListener('click', function (ev) {
+    const id = ev.target && ev.target.id;
+    if (id === 'syncBtn') { syncOpenPanel(); return; }
+    if (id === 'syncCloseBtn') { const m = document.getElementById('syncModal'); if (m) m.hidden = true; return; }
+    if (id === 'syncSaveBtn') { syncSave(); return; }
+    const m = document.getElementById('syncModal');
+    if (m && !m.hidden && ev.target === m) { m.hidden = true; }
   });
 
   if (syncEnabled()) {
