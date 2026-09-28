@@ -838,4 +838,109 @@
     fetchList(1, false);
   }
   init();
+
+  // ---------- 云同步（历史/收藏存云端，支持多设备与清数据后恢复） ----------
+  const SYNC_CODE_KEY = 'vb_sync_code';
+  const SYNC_ON_KEY = 'vb_sync_on';
+  const SYNC_MAX_H = 30;
+  const SYNC_MAX_F = 100;
+  let syncPushTimer = null;
+  let syncLastSnap = '';
+
+  function syncCode() { return (localStorage.getItem(SYNC_CODE_KEY) || '').trim(); }
+  function syncEnabled() { return localStorage.getItem(SYNC_ON_KEY) === '1' && syncCode().length >= 4; }
+  function syncMode() { return PRO_MODE ? 'pro' : 'normal'; }
+
+  function syncSetStatus(msg, ok) {
+    const el = document.getElementById('syncStatus');
+    if (el) { el.textContent = msg || ''; el.style.color = ok === false ? '#e06666' : '#7cc36a'; }
+  }
+
+  function syncMergeList(a, b, keyFn, timeFn) {
+    const map = new Map();
+    for (const it of [].concat(a || [], b || [])) {
+      if (!it || typeof it !== 'object' || it.id == null) continue;
+      const k = keyFn(it);
+      const prev = map.get(k);
+      if (!prev || (Number(timeFn(it)) || 0) >= (Number(timeFn(prev)) || 0)) map.set(k, it);
+    }
+    return [...map.values()];
+  }
+
+  function syncSnap() { return JSON.stringify({ h: loadHistory(), f: loadFavorites() }); }
+
+  async function syncPull(silent) {
+    if (!syncEnabled()) return false;
+    try {
+      const r = await fetch('/api/sync?key=' + encodeURIComponent(syncCode()) + '&mode=' + syncMode());
+      if (!r.ok) throw new Error('http ' + r.status);
+      const j = await r.json();
+      if (!j || !j.ok) throw new Error('bad response');
+      const data = j.data || {};
+      const history = syncMergeList(loadHistory(), data.history, (x) => x.id + '|' + (x.src || '') + '|' + (x.epIndex == null ? '' : x.epIndex), (x) => x.updatedAt)
+        .sort((x, y) => (Number(y.updatedAt) || 0) - (Number(x.updatedAt) || 0)).slice(0, SYNC_MAX_H);
+      saveHistoryList(history);
+      const favorites = syncMergeList(loadFavorites(), data.favorites, (x) => x.id + '|' + (x.src || ''), (x) => x.addedAt)
+        .sort((x, y) => (Number(y.addedAt) || 0) - (Number(x.addedAt) || 0)).slice(0, SYNC_MAX_F);
+      saveFavorites(favorites);
+      syncLastSnap = syncSnap();
+      if (!silent) syncSetStatus('同步完成 ' + new Date().toLocaleTimeString(), true);
+      return true;
+    } catch (e) {
+      if (!silent) syncSetStatus('同步失败：' + e.message, false);
+      return false;
+    }
+  }
+
+  async function syncPush() {
+    if (!syncEnabled()) return;
+    try {
+      await fetch('/api/sync?key=' + encodeURIComponent(syncCode()) + '&mode=' + syncMode(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ history: loadHistory(), favorites: loadFavorites() }),
+      });
+    } catch (e) { /* 离线时忽略，下次变化重试 */ }
+  }
+
+  function syncTick() {
+    if (!syncEnabled()) return;
+    const snap = syncSnap();
+    if (snap === syncLastSnap) return;
+    syncLastSnap = snap;
+    clearTimeout(syncPushTimer);
+    syncPushTimer = setTimeout(syncPush, 3000);
+  }
+
+  function syncOpenPanel() {
+    const modal = document.getElementById('syncModal');
+    const input = document.getElementById('syncCodeInput');
+    if (input) input.value = syncCode();
+    syncSetStatus(syncEnabled() ? '已开启云同步' : '未开启，输入同步码后点保存', true);
+    if (modal) modal.hidden = false;
+  }
+
+  const syncBtn = document.getElementById('syncBtn');
+  if (syncBtn) syncBtn.addEventListener('click', syncOpenPanel);
+  const syncCloseBtn = document.getElementById('syncCloseBtn');
+  if (syncCloseBtn) syncCloseBtn.addEventListener('click', () => { const m = document.getElementById('syncModal'); if (m) m.hidden = true; });
+  const syncSaveBtn = document.getElementById('syncSaveBtn');
+  if (syncSaveBtn) syncSaveBtn.addEventListener('click', async () => {
+    const input = document.getElementById('syncCodeInput');
+    const code = (input ? input.value : '').trim();
+    if (code.length < 4) { syncSetStatus('同步码至少 4 位', false); return; }
+    localStorage.setItem(SYNC_CODE_KEY, code);
+    localStorage.setItem(SYNC_ON_KEY, '1');
+    syncSetStatus('正在同步…', true);
+    await syncPull(false);
+    await syncPush();
+    const m = document.getElementById('syncModal');
+    if (m) m.hidden = true;
+  });
+
+  if (syncEnabled()) {
+    syncPull(true);
+    setInterval(syncTick, 5000);
+  }
+
 })();

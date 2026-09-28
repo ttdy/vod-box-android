@@ -215,3 +215,14 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   padding: 10px 20px; border-radius: 10px; background: rgba(0, 0, 0, .6);
   color: #fff; font-size: 17px; letter-spacing: .5px; pointer-events: none;
 }
+
+/* 云同步面板 */
+.sync-modal { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 999; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.sync-modal[hidden] { display: none; }
+.sync-card { background: #1b1c22; color: #e8e8ea; border-radius: 12px; padding: 18px; width: 100%; max-width: 360px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.sync-card h3 { margin: 0 0 8px; font-size: 17px; }
+.sync-card p { margin: 0 0 12px; font-size: 12px; color: #9aa0aa; line-height: 1.5; }
+.sync-card input { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid #333; background: #101116; color: #e8e8ea; margin-bottom: 10px; }
+.sync-status { font-size: 12px; color: #7cc36a; min-height: 16px; margin-bottom: 10px; }
+.sync-actions { display: flex; gap: 8px; }
+.sync-actions button { flex: 1; }

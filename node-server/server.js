@@ -668,6 +668,68 @@ app.get('/api/img', async (req, res) => {
   proxyMedia(res, u, originOf(u));
 });
 
+// ---------- 云同步：转发到 CF 云端（/api/sync → 存 Cloudflare KV，避免清数据/换机丢失） ----------
+const SYNC_BASES = RELAY_BASES.map((b) => b.replace(/\/api\/relay$/, '/api/sync'));
+const SYNC_TIMEOUT = 8000;
+let _syncPreferred = 0;
+
+function orderedSyncBases() {
+  if (!_syncPreferred) return SYNC_BASES;
+  return SYNC_BASES.slice(_syncPreferred).concat(SYNC_BASES.slice(0, _syncPreferred));
+}
+
+function readRawBody(req, limit = 2 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) { reject(new Error('body too large')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+async function proxySync(req, res) {
+  const key = String(req.query.key || '').trim();
+  if (key.length < 4) { res.status(400).json({ error: 'bad-key', message: '同步码至少 4 位' }); return; }
+  const mode = req.query.mode === 'pro' ? 'pro' : 'normal';
+  const qs = '?key=' + encodeURIComponent(key) + '&mode=' + mode;
+  let body = null;
+  if (req.method === 'POST') {
+    try { body = await readRawBody(req); } catch (e) { res.status(413).json({ error: 'body-too-large' }); return; }
+    if (!body || !body.trim()) body = '{}';
+  }
+  for (const base of orderedSyncBases()) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SYNC_TIMEOUT);
+    try {
+      const r = await fetch(base + qs, {
+        method: body === null ? 'GET' : 'POST',
+        headers: body === null ? undefined : { 'Content-Type': 'application/json' },
+        body: body === null ? undefined : body,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      const text = await r.text();
+      if (r.ok) {
+        const i = SYNC_BASES.indexOf(base);
+        if (i > 0) _syncPreferred = i;
+      }
+      res.status(r.status).type('application/json').send(text);
+      return;
+    } catch (e) {
+      clearTimeout(timer);
+    }
+  }
+  res.status(502).json({ error: 'sync-upstream-failed', message: '云端同步服务不可用' });
+}
+
+app.get('/api/sync', async (req, res) => { await proxySync(req, res); });
+app.post('/api/sync', async (req, res) => { await proxySync(req, res); });
+
 // ---------- 静态资源 ----------
 // /hls.js/hls.min.js 已改为 public/hls.js/hls.min.js 静态文件提供(不再依赖 node_modules/hls.js)
 app.use(express.static(path.join(__dirname, 'public')));
