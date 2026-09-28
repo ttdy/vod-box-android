@@ -11,8 +11,8 @@ android {
         applicationId "com.vodbox.app"
         minSdk 26
         targetSdk 34
-        versionCode 10
-        versionName "1.9"
+        versionCode 1
+        versionName "1.1"
         externalNativeBuild {
             cmake {
                 cppFlags ""

@@ -258,7 +258,7 @@
     try { return JSON.parse(localStorage.getItem(FAV_KEY) || '[]'); } catch (e) { return []; }
   }
   function saveFavorites(list) {
-    localStorage.setItem(FAV_KEY, JSON.stringify(list.slice(0, 200)));
+    localStorage.setItem(FAV_KEY, JSON.stringify(list.slice(0, 100)));
   }
   function isFavorited(id, src) {
     return loadFavorites().some((f) => f.id === id && f.src === src);
