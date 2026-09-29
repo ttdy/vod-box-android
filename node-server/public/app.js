@@ -232,6 +232,7 @@
   }
   function saveHistoryList(list) {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, 30)));
+    try { localStorage.setItem('vb_sync_mt', String(Date.now())); } catch (e) { }
   }
   function addHistory(rec) {
     const list = loadHistory().filter((h) => !(h.id === rec.id && h.src === rec.src && h.epIndex === rec.epIndex));
@@ -259,6 +260,7 @@
   }
   function saveFavorites(list) {
     localStorage.setItem(FAV_KEY, JSON.stringify(list.slice(0, 100)));
+    try { localStorage.setItem('vb_sync_mt', String(Date.now())); } catch (e) { }
   }
   function isFavorited(id, src) {
     return loadFavorites().some((f) => f.id === id && f.src === src);
@@ -856,15 +858,19 @@
     if (el) { el.textContent = msg || ''; el.style.color = ok === false ? '#e06666' : '#7cc36a'; }
   }
 
-  function syncMergeList(a, b, keyFn, timeFn) {
-    const map = new Map();
-    for (const it of [].concat(a || [], b || [])) {
-      if (!it || typeof it !== 'object' || it.id == null) continue;
-      const k = keyFn(it);
-      const prev = map.get(k);
-      if (!prev || (Number(timeFn(it)) || 0) >= (Number(timeFn(prev)) || 0)) map.set(k, it);
-    }
-    return [...map.values()];
+  const SYNC_MT_KEY = 'vb_sync_mt';
+  let syncTimerId = null;
+  function syncMt() { return Number(localStorage.getItem(SYNC_MT_KEY) || 0) || 0; }
+  function syncApply(data, mt) {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify((Array.isArray(data.history) ? data.history : []).slice(0, SYNC_MAX_H)));
+    localStorage.setItem(FAV_KEY, JSON.stringify((Array.isArray(data.favorites) ? data.favorites : []).slice(0, SYNC_MAX_F)));
+    localStorage.setItem(SYNC_MT_KEY, String(mt));
+    try { renderHistory(); } catch (e) { }
+    try { renderFavorites(); } catch (e) { }
+  }
+  function syncStartTick() {
+    if (syncTimerId) return;
+    syncTimerId = setInterval(syncTick, 5000);
   }
 
   function syncSnap() { return JSON.stringify({ h: loadHistory(), f: loadFavorites() }); }
@@ -877,14 +883,19 @@
       const j = await r.json();
       if (!j || !j.ok) throw new Error('bad response');
       const data = j.data || {};
-      const history = syncMergeList(loadHistory(), data.history, (x) => x.id + '|' + (x.src || '') + '|' + (x.epIndex == null ? '' : x.epIndex), (x) => x.updatedAt)
-        .sort((x, y) => (Number(y.updatedAt) || 0) - (Number(x.updatedAt) || 0)).slice(0, SYNC_MAX_H);
-      saveHistoryList(history);
-      const favorites = syncMergeList(loadFavorites(), data.favorites, (x) => x.id + '|' + (x.src || ''), (x) => x.addedAt)
-        .sort((x, y) => (Number(y.addedAt) || 0) - (Number(x.addedAt) || 0)).slice(0, SYNC_MAX_F);
-      saveFavorites(favorites);
-      syncLastSnap = syncSnap();
-      if (!silent) syncSetStatus('同步完成 ' + new Date().toLocaleTimeString(), true);
+      const remoteMt = Number(data.updatedAt) || 0;
+      const localMt = syncMt();
+      const localHas = loadHistory().length > 0 || loadFavorites().length > 0;
+      if (remoteMt > localMt) {
+        syncApply(data, remoteMt);
+        syncLastSnap = syncSnap();
+        if (!silent) syncSetStatus('已从云端同步 ' + new Date().toLocaleTimeString(), true);
+      } else if (localMt > remoteMt || (localMt === 0 && localHas)) {
+        await syncPush();
+        if (!silent) syncSetStatus('已上传到云端 ' + new Date().toLocaleTimeString(), true);
+      } else if (!silent) {
+        syncSetStatus('已是最新 ' + new Date().toLocaleTimeString(), true);
+      }
       return true;
     } catch (e) {
       if (!silent) syncSetStatus('同步失败：' + e.message, false);
@@ -895,11 +906,20 @@
   async function syncPush() {
     if (!syncEnabled()) return;
     try {
-      await fetch('/api/sync?key=' + encodeURIComponent(syncCode()) + '&mode=' + syncMode(), {
+      const updatedAt = Date.now();
+      const r = await fetch('/api/sync?key=' + encodeURIComponent(syncCode()) + '&mode=' + syncMode(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ history: loadHistory(), favorites: loadFavorites() }),
+        body: JSON.stringify({ history: loadHistory(), favorites: loadFavorites(), updatedAt: updatedAt }),
       });
+      if (!r.ok) throw new Error('http ' + r.status);
+      let serverMt = updatedAt;
+      try {
+        const j = await r.json();
+        if (j && j.data && Number(j.data.updatedAt)) serverMt = Number(j.data.updatedAt);
+      } catch (e) { }
+      localStorage.setItem(SYNC_MT_KEY, String(serverMt));
+      syncLastSnap = syncSnap();
     } catch (e) { /* 离线时忽略，下次变化重试 */ }
   }
 
@@ -907,7 +927,6 @@
     if (!syncEnabled()) return;
     const snap = syncSnap();
     if (snap === syncLastSnap) return;
-    syncLastSnap = snap;
     clearTimeout(syncPushTimer);
     syncPushTimer = setTimeout(syncPush, 3000);
   }
@@ -927,8 +946,8 @@
     localStorage.setItem(SYNC_CODE_KEY, code);
     localStorage.setItem(SYNC_ON_KEY, '1');
     syncSetStatus('正在同步…', true);
-    const ok = await syncPull(false);
-    if (ok) await syncPush();
+    await syncPull(false);
+    syncStartTick();
     const m = document.getElementById('syncModal');
     if (m) m.hidden = true;
   }
@@ -945,7 +964,7 @@
 
   if (syncEnabled()) {
     syncPull(true);
-    setInterval(syncTick, 5000);
+    syncStartTick();
   }
 
 })();
