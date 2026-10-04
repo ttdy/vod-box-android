@@ -24,6 +24,7 @@ import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -59,6 +60,7 @@ public class MainActivity extends Activity {
 
     private WebView webView;
     private FrameLayout loadingView;
+    private int loadRetry = 0;
     private static boolean clearedProSession = false;
     // 页面内全屏状态（由网页通过 JS 桥控制），用于返回键退出全屏
     private boolean jsFullscreen = false;
@@ -125,6 +127,12 @@ public class MainActivity extends Activity {
         webView.addJavascriptInterface(new ScreenKeepBridge(), "VodBoxScreen");
         webView.addJavascriptInterface(new FullscreenBridge(), "VodBoxFullscreen");
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                super.onReceivedError(view, request, error);
+                if (request != null && request.isForMainFrame()) retryLoadHome();
+            }
+
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
@@ -489,8 +497,9 @@ public class MainActivity extends Activity {
         new Thread(new Runnable() {
             @Override
             public void run() {
+                // 只等端口监听，最多 180 秒；避免远程配置拉取慢时被误判成启动失败
                 int tries = 0;
-                while (!isServerUp() && tries < 80) {
+                while (!isServerUp() && tries < 600) {
                     try { Thread.sleep(300); } catch (InterruptedException e) { break; }
                     tries++;
                 }
@@ -506,16 +515,31 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    // 只探测 127.0.0.1:3000 端口是否已监听，不依赖 /api 接口
+    // （/api 首次会等待远程配置拉取，用它判断会把启动误判为失败）
     private boolean isServerUp() {
+        java.net.Socket s = new java.net.Socket();
         try {
-            HttpURLConnection c = (HttpURLConnection) new URL(NODE_URL + "api/sources").openConnection();
-            c.setConnectTimeout(300);
-            c.setReadTimeout(300);
-            int code = c.getResponseCode();
-            c.disconnect();
-            return code >= 200 && code < 500;
+            s.connect(new java.net.InetSocketAddress("127.0.0.1", 3000), 400);
+            return true;
         } catch (Exception e) {
             return false;
+        } finally {
+            try { s.close(); } catch (Exception ignored) { }
+        }
+    }
+
+    // 首页加载失败（服务偶发未就绪）时自动重试，避免停在错误页要手动重开
+    private void retryLoadHome() {
+        if (loadRetry >= 15) return;
+        loadRetry++;
+        if (webView != null) {
+            webView.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (webView != null) webView.loadUrl(NODE_URL);
+                }
+            }, 1000);
         }
     }
 

@@ -534,7 +534,8 @@ function proAuthed(q) { return q.mode !== 'pro' || q.pwd === PRO_PWD; }
 // （成功即远程源优先展示，失败/超时则沿用本地 config.json，不阻塞后续访问）
 app.use('/api', async (req, res, next) => {
   if (!REMOTE_CONFIG_URLS.length) return next();
-  try { await refreshFromRemote(false); } catch (e) {}
+  // 未就绪时最多等 3 秒：远程地址不可达时不能把首屏/启动探测卡死
+  try { await Promise.race([refreshFromRemote(false), new Promise((r) => setTimeout(r, 3000))]); } catch (e) {}
   next();
 });
 
