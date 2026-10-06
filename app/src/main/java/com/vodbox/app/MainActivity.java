@@ -397,7 +397,6 @@ public class MainActivity extends Activity {
         final ProgressDialog pd = new ProgressDialog(this);
         pd.setMessage("正在下载更新包…");
         pd.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
-        pd.setIndeterminate(true);
         pd.setMax(100);
         pd.setProgress(0);
         pd.setCancelable(false);
@@ -425,8 +424,14 @@ public class MainActivity extends Activity {
                             runOnUiThread(new Runnable() {
                                 @Override
                                 public void run() {
-                                    pd.setIndeterminate(false);
                                     pd.setMax(total);
+                                }
+                            });
+                        } else {
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    pd.setIndeterminate(true);
                                 }
                             });
                         }
