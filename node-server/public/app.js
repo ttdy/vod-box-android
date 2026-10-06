@@ -875,27 +875,42 @@
 
   function syncSnap() { return JSON.stringify({ h: loadHistory(), f: loadFavorites() }); }
 
+  function syncUrl(q) { return (typeof api === 'function') ? api(q) : q; }
+
+  // 拉取云端记录
+  async function syncFetchRemote() {
+    const r = await fetch(syncUrl('/api/sync?key=' + encodeURIComponent(syncCode()) + '&mode=' + syncMode()));
+    if (!r.ok) throw new Error('http ' + r.status);
+    const j = await r.json();
+    if (!j || !j.ok) throw new Error('bad response');
+    return j.data || {};
+  }
+
+  function syncRemoteCount(d) {
+    const h = Array.isArray(d.history) ? d.history.length : 0;
+    const f = Array.isArray(d.favorites) ? d.favorites.length : 0;
+    return h + f;
+  }
+
+  // 自动同步：云端更新则恢复，本地更新才上传；本地为空时绝不上传，避免覆盖云端
   async function syncPull(silent) {
     if (!syncEnabled()) return false;
     try {
-      const r = await fetch('/api/sync?key=' + encodeURIComponent(syncCode()) + '&mode=' + syncMode());
-      if (!r.ok) throw new Error('http ' + r.status);
-      const j = await r.json();
-      if (!j || !j.ok) throw new Error('bad response');
-      const data = j.data || {};
+      const data = await syncFetchRemote();
       const remoteMt = Number(data.updatedAt) || 0;
+      const remoteHas = syncRemoteCount(data) > 0;
       const localMt = syncMt();
       const localHas = loadHistory().length > 0 || loadFavorites().length > 0;
-      if (remoteMt > localMt) {
+      if (remoteHas && remoteMt > localMt) {
         syncApply(data, remoteMt);
-        syncLastSnap = syncSnap();
         if (!silent) syncSetStatus('已从云端同步 ' + new Date().toLocaleTimeString(), true);
-      } else if (localMt > remoteMt || (localMt === 0 && localHas)) {
-        await syncPush();
+      } else if (localHas && (localMt > remoteMt || !remoteHas)) {
+        await syncPush(false);
         if (!silent) syncSetStatus('已上传到云端 ' + new Date().toLocaleTimeString(), true);
       } else if (!silent) {
         syncSetStatus('已是最新 ' + new Date().toLocaleTimeString(), true);
       }
+      syncLastSnap = syncSnap();
       return true;
     } catch (e) {
       if (!silent) syncSetStatus('同步失败：' + e.message, false);
@@ -903,14 +918,18 @@
     }
   }
 
-  async function syncPush() {
-    if (!syncEnabled()) return;
+  // force=true 才允许本地为空时上传（仅用户明确点「保存到云端」）
+  async function syncPush(force) {
+    if (!syncEnabled()) return false;
+    const history = loadHistory();
+    const favorites = loadFavorites();
+    if (!force && !history.length && !favorites.length) return false;
     try {
       const updatedAt = Date.now();
-      const r = await fetch('/api/sync?key=' + encodeURIComponent(syncCode()) + '&mode=' + syncMode(), {
+      const r = await fetch(syncUrl('/api/sync?key=' + encodeURIComponent(syncCode()) + '&mode=' + syncMode()), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ history: loadHistory(), favorites: loadFavorites(), updatedAt: updatedAt }),
+        body: JSON.stringify({ history: history, favorites: favorites, updatedAt: updatedAt }),
       });
       if (!r.ok) throw new Error('http ' + r.status);
       let serverMt = updatedAt;
@@ -920,7 +939,10 @@
       } catch (e) { }
       localStorage.setItem(SYNC_MT_KEY, String(serverMt));
       syncLastSnap = syncSnap();
-    } catch (e) { /* 离线时忽略，下次变化重试 */ }
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   function syncTick() {
@@ -928,28 +950,69 @@
     const snap = syncSnap();
     if (snap === syncLastSnap) return;
     clearTimeout(syncPushTimer);
-    syncPushTimer = setTimeout(syncPush, 3000);
+    syncPushTimer = setTimeout(function () { syncPush(false); }, 3000);
   }
 
   function syncOpenPanel() {
     const modal = document.getElementById('syncModal');
     const input = document.getElementById('syncCodeInput');
     if (input) input.value = syncCode();
-    syncSetStatus(syncEnabled() ? '已开启云同步' : '未开启，输入同步码后点保存', true);
+    syncSetStatus(syncEnabled() ? '已开启，可选择「保存到云端」或「从云端恢复」' : '输入同步码（至少 4 位）后点保存或恢复', true);
     if (modal) modal.hidden = false;
   }
 
-  async function syncSave() {
+  function syncReadCode() {
     const input = document.getElementById('syncCodeInput');
     const code = (input ? input.value : '').trim();
-    if (code.length < 4) { syncSetStatus('同步码至少 4 位', false); return; }
+    if (code.length < 4) { syncSetStatus('同步码至少 4 位', false); return ''; }
     localStorage.setItem(SYNC_CODE_KEY, code);
     localStorage.setItem(SYNC_ON_KEY, '1');
-    syncSetStatus('正在同步…', true);
-    await syncPull(false);
+    return code;
+  }
+
+  // 保存：把本机记录上传到云端
+  async function syncBackup() {
+    if (!syncReadCode()) return;
+    if (!loadHistory().length && !loadFavorites().length) {
+      syncSetStatus('本机暂无记录，未上传', false);
+      return;
+    }
+    syncSetStatus('正在检查云端…', true);
+    try {
+      const remote = await syncFetchRemote();
+      const ln = loadHistory().length + loadFavorites().length;
+      const rn = syncRemoteCount(remote);
+      if (rn > ln && !confirm('云端已有 ' + rn + ' 条记录，本机有 ' + ln + ' 条。\n继续保存会用本机记录覆盖云端，确定吗？')) {
+        syncSetStatus('已取消保存', false);
+        return;
+      }
+    } catch (e) { /* 云端不可达时仍允许保存 */ }
+    syncSetStatus('正在保存到云端…', true);
+    localStorage.setItem(SYNC_MT_KEY, String(Date.now()));
+    const ok = await syncPush(true);
+    if (ok) syncSetStatus('已保存到云端 ' + new Date().toLocaleTimeString(), true);
+    else syncSetStatus('保存失败，请检查网络后重试', false);
     syncStartTick();
     const m = document.getElementById('syncModal');
-    if (m) m.hidden = true;
+    if (m && ok) m.hidden = true;
+  }
+
+  // 恢复：用云端记录覆盖本机（恢复上一次保存的记录）
+  async function syncRestore() {
+    if (!syncReadCode()) return;
+    syncSetStatus('正在从云端恢复…', true);
+    try {
+      const data = await syncFetchRemote();
+      if (syncRemoteCount(data) === 0) { syncSetStatus('云端暂无该同步码的记录', false); return; }
+      syncApply(data, Number(data.updatedAt) || Date.now());
+      syncLastSnap = syncSnap();
+      syncSetStatus('已恢复云端记录 ' + new Date().toLocaleTimeString(), true);
+      syncStartTick();
+      const m = document.getElementById('syncModal');
+      if (m) m.hidden = true;
+    } catch (e) {
+      syncSetStatus('恢复失败：' + e.message, false);
+    }
   }
 
   // 事件委托：脚本可能早于弹窗插入 DOM 执行，直接绑定会绑不上
@@ -957,7 +1020,9 @@
     const id = ev.target && ev.target.id;
     if (id === 'syncBtn') { syncOpenPanel(); return; }
     if (id === 'syncCloseBtn') { const m = document.getElementById('syncModal'); if (m) m.hidden = true; return; }
-    if (id === 'syncSaveBtn') { syncSave(); return; }
+    if (id === 'syncBackupBtn') { syncBackup(); return; }
+    if (id === 'syncRestoreBtn') { syncRestore(); return; }
+    if (id === 'syncSaveBtn') { syncBackup(); return; }
     const m = document.getElementById('syncModal');
     if (m && !m.hidden && ev.target === m) { m.hidden = true; }
   });
