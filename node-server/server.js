@@ -92,7 +92,10 @@ const RELAY_BASES = [
 ];
 const RELAY_TOKEN = 'vb-relay-7c41f0a9';
 const RELAY_TIMEOUT = 6000;
+const RELAY_PROBE_TTL = 10 * 60 * 1000;   // 测速结果缓存 10 分钟
 let _relayPreferred = 0;
+let _relayRanked = null;                   // 按当前网络测速排序后的中转域名
+let _relayRankedAt = 0;
 
 function isPublicHttpUrl(u) {
   if (!/^https?:\/\//i.test(u)) return false;
@@ -103,8 +106,39 @@ function isRelayUrl(u) {
   return RELAY_BASES.some((b) => u.startsWith(b));
 }
 
-// 首次成功的域名会被记住并优先使用，避免每次都先在不可用域名上等待
+// 实测各中转域名的连通性与延迟，返回按当前网络排序的列表（最快在前，不可达排最后兜底）
+async function rankedRelayBases(force) {
+  if (!force && _relayRanked && Date.now() - _relayRankedAt < RELAY_PROBE_TTL) return _relayRanked;
+  const probes = await Promise.all(RELAY_BASES.map(async (base) => {
+    const origin = base.replace(/\/api\/relay$/, '');
+    const t0 = Date.now();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    try {
+      const r = await fetch(origin + '/api/sources', { signal: ctrl.signal });
+      if (!r.ok) return null;
+      await r.text();
+      return { base, ms: Date.now() - t0 };
+    } catch (e) {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }));
+  const ok = probes.filter(Boolean).sort((a, b) => a.ms - b.ms);
+  const ranked = ok.map((x) => x.base);
+  for (const b of RELAY_BASES) if (!ranked.includes(b)) ranked.push(b);
+  _relayRanked = ranked;
+  _relayRankedAt = Date.now();
+  console.log('[relay] 中转测速: ' + (ok.length
+    ? ok.map((x) => x.base.replace(/^https?:\/\//, '') + '(' + x.ms + 'ms)').join(' > ')
+    : '全部不可达，保持默认顺序'));
+  return ranked;
+}
+
+// 优先用测速最优域名；未测速时回退到"记住上次成功域名"的顺序
 function orderedRelayBases() {
+  if (_relayRanked && _relayRanked.length) return _relayRanked;
   if (!_relayPreferred) return RELAY_BASES;
   return RELAY_BASES.slice(_relayPreferred).concat(RELAY_BASES.slice(0, _relayPreferred));
 }
@@ -241,6 +275,7 @@ async function fetchBuf(url, opts = {}) {
     return await fetchBufDirect(url, opts);
   } catch (e) {
     if (!isPublicHttpUrl(url) || isRelayUrl(url)) throw e;
+    await rankedRelayBases();
     for (const r of relayUrlsFor(url, opts.referer)) {
       try {
         const buf = await fetchBufDirect(r.url, { timeout: RELAY_TIMEOUT });
@@ -270,6 +305,7 @@ async function fetchTextChecked(url, s) {
   try { text = await fetchText(url, { referer, timeout: 8000 }); } catch (e) { text = ''; }
   if (!looksBrokenBody(text, s)) return text;
   if (isPublicHttpUrl(url) && !isRelayUrl(url)) {
+    await rankedRelayBases();
     for (const r of relayUrlsFor(url, referer)) {
       try {
         const t = await fetchTextDirect(r.url, { timeout: RELAY_TIMEOUT });
@@ -675,6 +711,9 @@ const SYNC_TIMEOUT = 8000;
 let _syncPreferred = 0;
 
 function orderedSyncBases() {
+  if (_relayRanked && _relayRanked.length) {
+    return _relayRanked.map((b) => b.replace(/\/api\/relay$/, '/api/sync'));
+  }
   if (!_syncPreferred) return SYNC_BASES;
   return SYNC_BASES.slice(_syncPreferred).concat(SYNC_BASES.slice(0, _syncPreferred));
 }
@@ -703,6 +742,7 @@ async function proxySync(req, res) {
     try { body = await readRawBody(req); } catch (e) { res.status(413).json({ error: 'body-too-large' }); return; }
     if (!body || !body.trim()) body = '{}';
   }
+  await rankedRelayBases();
   for (const base of orderedSyncBases()) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SYNC_TIMEOUT);
@@ -751,4 +791,6 @@ startRemoteConfigRefresh();
 const HOST = process.platform === 'android' ? '127.0.0.1' : undefined;
 app.listen(PORT, HOST, () => {
   console.log(`VOD Box running at http://${HOST || 'localhost'}:${PORT}`);
+  // 后台预热中转测速（不阻塞启动），让播放等同步路径也能用最快域名
+  setTimeout(() => { rankedRelayBases().catch(() => {}); }, 3000);
 });
