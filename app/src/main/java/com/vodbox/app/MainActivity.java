@@ -396,7 +396,10 @@ public class MainActivity extends Activity {
     private void downloadAndInstall(final String url) {
         final ProgressDialog pd = new ProgressDialog(this);
         pd.setMessage("正在下载更新包…");
+        pd.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
         pd.setIndeterminate(true);
+        pd.setMax(100);
+        pd.setProgress(0);
         pd.setCancelable(false);
         pd.show();
         new Thread(new Runnable() {
@@ -412,17 +415,49 @@ public class MainActivity extends Activity {
                     HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
                     c.setConnectTimeout(10000);
                     c.setReadTimeout(30000);
+                    c.setInstanceFollowRedirects(true);
                     int code = c.getResponseCode();
                     if (code != 200) {
                         err = "下载失败（HTTP " + code + "）";
                     } else {
+                        final int total = c.getContentLength();
+                        if (total > 0) {
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    pd.setIndeterminate(false);
+                                    pd.setMax(total);
+                                }
+                            });
+                        }
                         InputStream in = c.getInputStream();
                         OutputStream out = new FileOutputStream(target);
                         byte[] buf = new byte[8192];
                         int n;
-                        while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+                        long done = 0;
+                        long lastTick = 0;
+                        while ((n = in.read(buf)) != -1) {
+                            out.write(buf, 0, n);
+                            done += n;
+                            if (total > 0) {
+                                long now = System.currentTimeMillis();
+                                if (now - lastTick >= 200) {
+                                    lastTick = now;
+                                    final int prog = (int) Math.min(done, total);
+                                    final int pct = (int) (done * 100 / total);
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            pd.setProgress(prog);
+                                            pd.setMessage("正在下载更新包… " + pct + "%");
+                                        }
+                                    });
+                                }
+                            }
+                        }
                         in.close();
                         out.close();
+                        if (total > 0 && done < total) err = "下载不完整，请重试";
                     }
                     c.disconnect();
                 } catch (Exception e) {
