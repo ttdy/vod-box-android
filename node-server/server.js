@@ -298,21 +298,59 @@ function looksBrokenBody(text, s) {
   try { return !JSON.parse(t); } catch (e) { return true; }
 }
 
-// 采集接口取数：直连失败或返回内容不可用时，强制经 CF 中转重取一次
+// 直连超时：WiFi/运营商干扰下缩短到 5 秒，减少无效等待
+const DIRECT_TIMEOUT = 5000;
+// 直连失败冷却：某源直连近期失败过（被运营商/路由器干扰），一段时间内直接用中转，避免每次请求都白等超时
+const DIRECT_FAIL_COOLDOWN = 10 * 60 * 1000;
+const _directFailAt = Object.create(null);
+
+function directBlocked(key) {
+  return !!key && _directFailAt[key] && Date.now() - _directFailAt[key] < DIRECT_FAIL_COOLDOWN;
+}
+function markDirectFail(key) { if (key) _directFailAt[key] = Date.now(); }
+function markDirectOk(key) { if (key) delete _directFailAt[key]; }
+
+// 经 CF 中转取一次文本，成功返回内容，失败返回空串
+async function relayTextOnce(url, referer, s) {
+  if (!isPublicHttpUrl(url) || isRelayUrl(url)) return '';
+  await rankedRelayBases();
+  for (const r of relayUrlsFor(url, referer)) {
+    try {
+      const t = await fetchTextDirect(r.url, { timeout: RELAY_TIMEOUT });
+      if (!looksBrokenBody(t, s)) { markRelayOk(r.url); return t; }
+    } catch (e) { /* 试下一个 */ }
+  }
+  return '';
+}
+
+// 经 CF 中转取一次原始文本（不校验内容格式），用于播放列表回退
+async function relayTextRaw(url, referer) {
+  if (!isPublicHttpUrl(url) || isRelayUrl(url)) return '';
+  await rankedRelayBases();
+  for (const r of relayUrlsFor(url, referer)) {
+    try {
+      const t = await fetchTextDirect(r.url, { timeout: RELAY_TIMEOUT });
+      if (t) { markRelayOk(r.url); return t; }
+    } catch (e) { /* 试下一个 */ }
+  }
+  return '';
+}
+
+// 采集接口取数：直连失败或返回内容不可用时，经 CF 中转重取
 async function fetchTextChecked(url, s) {
   const referer = originOf(s && s.api ? s.api : url);
-  let text = '';
-  try { text = await fetchText(url, { referer, timeout: 8000 }); } catch (e) { text = ''; }
-  if (!looksBrokenBody(text, s)) return text;
-  if (isPublicHttpUrl(url) && !isRelayUrl(url)) {
-    await rankedRelayBases();
-    for (const r of relayUrlsFor(url, referer)) {
-      try {
-        const t = await fetchTextDirect(r.url, { timeout: RELAY_TIMEOUT });
-        if (!looksBrokenBody(t, s)) { markRelayOk(r.url); return t; }
-      } catch (e) { /* 试下一个 */ }
-    }
+  const key = referer || originOf(url);
+  if (directBlocked(key)) {
+    const rt = await relayTextOnce(url, referer, s);
+    if (rt) return rt;
+    delete _directFailAt[key];
   }
+  let text = '';
+  try { text = await fetchText(url, { referer, timeout: DIRECT_TIMEOUT }); } catch (e) { text = ''; }
+  if (!looksBrokenBody(text, s)) { markDirectOk(key); return text; }
+  markDirectFail(key);
+  const rt = await relayTextOnce(url, referer, s);
+  if (rt) return rt;
   return text;
 }
 
@@ -510,6 +548,8 @@ function relayMedia(res, url, referer, extra) {
 
 function proxyMedia(res, url, referer, extra) {
   const u = new URL(url);
+  const key = u.host;
+  if (directBlocked(key)) { relayMedia(res, url, referer, extra); return; }
   const mod = u.protocol === 'https:' ? https : http;
   const headers = {
     'User-Agent': UA,
@@ -522,12 +562,15 @@ function proxyMedia(res, url, referer, extra) {
   const fallback = () => {
     if (settled) return;
     settled = true;
+    markDirectFail(key);
     if (!isPublicHttpUrl(url)) { try { res.status(502).send('stream error'); } catch (e) {} return; }
     relayMedia(res, url, referer, extra);
   };
   const req = mod.request(u, { headers, method: 'GET', agent: u.protocol === 'https:' ? agent : undefined }, (pRes) => {
     if ((pRes.statusCode || 0) >= 400) { pRes.resume(); fallback(); return; }
     settled = true;
+    markDirectOk(key);
+    req.setTimeout(0);
     res.statusCode = pRes.statusCode || 200;
     for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control']) {
       if (pRes.headers[h]) res.setHeader(h, pRes.headers[h]);
@@ -537,14 +580,22 @@ function proxyMedia(res, url, referer, extra) {
     pRes.pipe(res);
     pRes.on('error', () => { try { res.destroy(); } catch (e) {} });
   });
-  req.setTimeout(30000, () => req.destroy(new Error('timeout')));
+  req.setTimeout(DIRECT_TIMEOUT, () => req.destroy(new Error('direct timeout')));
   req.on('error', fallback);
   req.end();
 }
 
 async function proxyPlaylist(res, url, referer, depth = 0) {
   if (depth > 6) { res.status(502).send('playlist too deep'); return; }
-  const text = await fetchText(url, { referer, timeout: 20000 });
+  const key = originOf(url);
+  let text = '';
+  if (!directBlocked(key)) {
+    try { text = await fetchText(url, { referer, timeout: DIRECT_TIMEOUT }); } catch (e) { text = ''; }
+    if (text && /#EXTM3U|#EXTINF/.test(text)) markDirectOk(key);
+    else { markDirectFail(key); text = ''; }
+  }
+  if (!text) text = await relayTextRaw(url, referer);
+  if (!text) { res.status(502).send('playlist error'); return; }
   const proto = (u) => `/api/stream?u=${encodeURIComponent(u)}`;
   const out = text.split('\n').map((line) => {
     const t = line.trim();
