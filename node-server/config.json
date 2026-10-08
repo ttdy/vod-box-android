@@ -4,29 +4,6 @@
     "https://vod-box.pages.dev/abc.json",
     "https://tvcc.de5.net/abc.json"
   ],
-  "jisu": {
-    "name": "极速资源",
-    "api": "https://jszyapi.com/api.php/provide/vod/",
-    "format": "json",
-    "cats": [
-      {
-        "id": "1",
-        "name": "电影"
-      },
-      {
-        "id": "2",
-        "name": "电视剧"
-      },
-      {
-        "id": "3",
-        "name": "综艺"
-      },
-      {
-        "id": "4",
-        "name": "动漫"
-      }
-    ]
-  },
   "feifan": {
     "name": "非凡资源",
     "api": "https://cj.ffzyapi.com/api.php/provide/vod/",
