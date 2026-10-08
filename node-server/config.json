@@ -4,26 +4,27 @@
     "https://vod-box.pages.dev/abc.json",
     "https://tvcc.de5.net/abc.json"
   ],
-  "liangzi": {
-    "name": "量子资源",
-    "api": "http://cj.lziapi.com/api.php/provide/vod/",
+  "jisu": {
+    "name": "极速资源",
+    "api": "https://jszyapi.com/api.php/provide/vod/",
     "format": "json",
     "cats": [
-      { "id": "1", "name": "电影" },
-      { "id": "2", "name": "电视剧" },
-      { "id": "3", "name": "综艺" },
-      { "id": "4", "name": "动漫" }
-    ]
-  },
-  "hongniu": {
-    "name": "红牛资源",
-    "api": "https://www.hongniuzy2.com/api.php/provide/vod/",
-    "format": "json",
-    "cats": [
-      { "id": "1", "name": "电影" },
-      { "id": "2", "name": "电视剧" },
-      { "id": "3", "name": "综艺" },
-      { "id": "4", "name": "动漫" }
+      {
+        "id": "1",
+        "name": "电影"
+      },
+      {
+        "id": "2",
+        "name": "电视剧"
+      },
+      {
+        "id": "3",
+        "name": "综艺"
+      },
+      {
+        "id": "4",
+        "name": "动漫"
+      }
     ]
   },
   "feifan": {
@@ -31,17 +32,92 @@
     "api": "https://cj.ffzyapi.com/api.php/provide/vod/",
     "format": "json",
     "cats": [
-      { "id": "1", "name": "电影" },
-      { "id": "2", "name": "电视剧" },
-      { "id": "3", "name": "综艺" },
-      { "id": "4", "name": "动漫" }
+      {
+        "id": "1",
+        "name": "电影"
+      },
+      {
+        "id": "2",
+        "name": "电视剧"
+      },
+      {
+        "id": "3",
+        "name": "综艺"
+      },
+      {
+        "id": "4",
+        "name": "动漫"
+      }
     ]
   },
-  "tiankong": {
-    "name": "天空资源",
-    "api": "https://api.1080zyku.com/api.php/provide/vod/",
-    "format": "rss",
-    "cats": []
+  "shandian": {
+    "name": "闪电资源",
+    "api": "https://sdzyapi.com/api.php/provide/vod/",
+    "format": "json",
+    "cats": [
+      {
+        "id": "1",
+        "name": "电影"
+      },
+      {
+        "id": "2",
+        "name": "电视剧"
+      },
+      {
+        "id": "3",
+        "name": "综艺"
+      },
+      {
+        "id": "4",
+        "name": "动漫"
+      }
+    ]
+  },
+  "hongniu": {
+    "name": "红牛资源",
+    "api": "https://www.hongniuzy2.com/api.php/provide/vod/",
+    "format": "json",
+    "cats": [
+      {
+        "id": "1",
+        "name": "电影"
+      },
+      {
+        "id": "2",
+        "name": "电视剧"
+      },
+      {
+        "id": "3",
+        "name": "综艺"
+      },
+      {
+        "id": "4",
+        "name": "动漫"
+      }
+    ]
+  },
+  "liangzi": {
+    "name": "量子资源",
+    "api": "http://cj.lziapi.com/api.php/provide/vod/",
+    "format": "json",
+    "cats": [
+      {
+        "id": "1",
+        "name": "电影"
+      },
+      {
+        "id": "2",
+        "name": "电视剧"
+      },
+      {
+        "id": "3",
+        "name": "综艺"
+      },
+      {
+        "id": "4",
+        "name": "动漫"
+      }
+    ]
   },
   "_pro": {
     "ruyi": {
@@ -49,10 +125,22 @@
       "api": "https://cj.rycjapi.com/api.php/provide/vod/",
       "format": "json",
       "cats": [
-        { "id": "1", "name": "电影" },
-        { "id": "2", "name": "电视剧" },
-        { "id": "3", "name": "综艺" },
-        { "id": "4", "name": "动漫" }
+        {
+          "id": "1",
+          "name": "电影"
+        },
+        {
+          "id": "2",
+          "name": "电视剧"
+        },
+        {
+          "id": "3",
+          "name": "综艺"
+        },
+        {
+          "id": "4",
+          "name": "动漫"
+        }
       ]
     },
     "liangzi": {
@@ -60,10 +148,22 @@
       "api": "http://cj.lziapi.com/api.php/provide/vod/",
       "format": "json",
       "cats": [
-        { "id": "1", "name": "电影" },
-        { "id": "2", "name": "电视剧" },
-        { "id": "3", "name": "综艺" },
-        { "id": "4", "name": "动漫" }
+        {
+          "id": "1",
+          "name": "电影"
+        },
+        {
+          "id": "2",
+          "name": "电视剧"
+        },
+        {
+          "id": "3",
+          "name": "综艺"
+        },
+        {
+          "id": "4",
+          "name": "动漫"
+        }
       ]
     }
   }
