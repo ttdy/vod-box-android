@@ -336,22 +336,51 @@ async function relayTextRaw(url, referer) {
   return '';
 }
 
-// 采集接口取数：直连失败或返回内容不可用时，经 CF 中转重取
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// 等待第一个非空结果；全部为空则返回 null
+function firstNonNull(promises) {
+  return new Promise((resolve) => {
+    let left = promises.length;
+    let settled = false;
+    promises.forEach((p) => {
+      Promise.resolve(p).then((v) => {
+        if (settled) return;
+        if (v != null) { settled = true; resolve(v); return; }
+        if (--left === 0) { settled = true; resolve(null); }
+      }, () => { if (!settled && --left === 0) { settled = true; resolve(null); } });
+    });
+  });
+}
+
+// 采集接口取数：直连与 CF 中转并行竞速，谁先返回有效内容用谁，避免直连被干扰时白等超时
+// DIRECT_FAIL_COOLDOWN 内已知直连不可用的源，直接走中转
+const HEDGE_MS = 1200;
 async function fetchTextChecked(url, s) {
   const referer = originOf(s && s.api ? s.api : url);
   const key = referer || originOf(url);
-  if (directBlocked(key)) {
-    const rt = await relayTextOnce(url, referer, s);
-    if (rt) return rt;
-    delete _directFailAt[key];
-  }
-  let text = '';
-  try { text = await fetchText(url, { referer, timeout: DIRECT_TIMEOUT }); } catch (e) { text = ''; }
-  if (!looksBrokenBody(text, s)) { markDirectOk(key); return text; }
-  markDirectFail(key);
-  const rt = await relayTextOnce(url, referer, s);
-  if (rt) return rt;
-  return text;
+
+  let directDone = false, directOk = false;
+  const directTask = (async () => {
+    if (directBlocked(key)) { directDone = true; return null; }
+    try {
+      const t = await fetchText(url, { referer, timeout: DIRECT_TIMEOUT });
+      if (!looksBrokenBody(t, s)) { markDirectOk(key); directOk = true; directDone = true; return t; }
+    } catch (e) { /* 转由中转处理 */ }
+    markDirectFail(key);
+    directDone = true;
+    return null;
+  })();
+
+  const relayTask = (async () => {
+    const start = Date.now();
+    while (!directDone && Date.now() - start < HEDGE_MS) await sleep(100);
+    if (directOk) return null;
+    return (await relayTextOnce(url, referer, s)) || null;
+  })();
+
+  const v = await firstNonNull([directTask, relayTask]);
+  return v == null ? '' : v;
 }
 
 function originOf(u) {
@@ -644,33 +673,30 @@ app.get('/api/list', async (req, res) => {
     let { src = 'liangzi', t = '', pg = 1, wd = '' } = req.query;
     if (!SRC[src]) src = Object.keys(SRC)[0] || 'liangzi';
     const data = await fetchVod(src, { ac: 'list', t, pg, wd, limit: 24 }, SRC);
-    // 列表接口通常不返回图片，批量拉详情补全海报
-    const need = data.list.filter((v) => !v.vod_pic).map((v) => v.vod_id);
-    if (need.length) {
-      try {
-        const s = SRC[src];
-        const params = s && s.format === 'rss'
-          ? { ac: 'videolist', ids: need.join(','), pg: 1, limit: 50 }
-          : { ac: 'detail', ids: need.join(',') };
-        const rich = await fetchVod(src, params, SRC);
-        const map = new Map(rich.list.map((v) => [String(v.vod_id), v]));
-        data.list = data.list.map((v) => {
-          const r = map.get(String(v.vod_id));
-          if (!r) return v;
-          return Object.assign({}, v, {
-            vod_pic: r.vod_pic || v.vod_pic,
-            vod_year: r.vod_year || v.vod_year,
-            vod_area: r.vod_area || v.vod_area,
-            vod_director: r.vod_director || v.vod_director,
-            vod_actor: r.vod_actor || v.vod_actor,
-          });
-        });
-      } catch (e) { /* 补图失败则保留占位图 */ }
-    }
+    // 海报改由前端 /api/poster 懒加载补全，不再阻塞首屏返回
     res.json(data);
   } catch (e) {
     res.status(502).json({ error: e.message });
   }
+});
+
+// 懒加载海报：按源批量取详情，仅返回 id -> 海报图 的映射
+app.get('/api/poster', async (req, res) => {
+  if (!proAuthed(req.query)) { res.status(403).json({ error: 'forbidden' }); return; }
+  const SRC = req.query.mode === 'pro' ? SOURCES_PRO : SOURCES;
+  const key = String(req.query.src || '');
+  const ids = String(req.query.ids || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 60);
+  const s = SRC[key];
+  if (!s || !ids.length) { res.json({}); return; }
+  try {
+    const params = s.format === 'rss'
+      ? { ac: 'videolist', ids: ids.join(','), pg: 1, limit: 50 }
+      : { ac: 'detail', ids: ids.join(',') };
+    const rich = await fetchVod(key, params, SRC);
+    const out = {};
+    for (const v of rich.list) { if (v.vod_pic) out[String(v.vod_id)] = v.vod_pic; }
+    res.json(out);
+  } catch (e) { res.json({}); }
 });
 
 app.get('/api/search', async (req, res) => {
@@ -683,23 +709,8 @@ app.get('/api/search', async (req, res) => {
     try {
       const s = SRC[key];
       const data = await fetchVod(key, { ac: 'list', t: '', pg: 1, wd, limit: 12 }, SRC);
-      let list = data.list;
-      // 补全海报
-      const need = list.filter((v) => !v.vod_pic).map((v) => v.vod_id);
-      if (need.length) {
-        try {
-          const params = s.format === 'rss'
-            ? { ac: 'videolist', ids: need.join(','), pg: 1, limit: 50 }
-            : { ac: 'detail', ids: need.join(',') };
-          const rich = await fetchVod(key, params, SRC);
-          const map = new Map(rich.list.map((v) => [String(v.vod_id), v]));
-          list = list.map((v) => {
-            const r = map.get(String(v.vod_id));
-            return r ? Object.assign({}, v, { vod_pic: r.vod_pic || v.vod_pic }) : v;
-          });
-        } catch (e) { /* 忽略 */ }
-      }
-      return list.map((v) => Object.assign(v, { src_key: key, src_name: s.name }));
+      // 海报改由前端 /api/poster 懒加载补全
+      return data.list.map((v) => Object.assign(v, { src_key: key, src_name: s.name }));
     } catch (e) { return []; }
   }));
   const list = results.filter((r) => r.status === 'fulfilled').flatMap((r) => r.value);

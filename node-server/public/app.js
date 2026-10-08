@@ -435,8 +435,8 @@
     g.innerHTML = list.map((v) => {
       const meta = [v.vod_year, v.vod_area, v.type_name].filter(Boolean).join(' · ');
       const srcTag = v.src_name ? `<span class="src-tag">${escapeHtml(v.src_name)}</span>` : '';
-      return `<div class="card" data-id="${v.vod_id}" data-src="${v.src_key || ''}" data-name="${escapeHtml(v.vod_name)}">
-        <div class="poster">${srcTag}<img src="${posterUrl(v.vod_pic)}" loading="lazy" alt="" onerror="this.remove()"></div>
+      return `<div class="card" data-id="${v.vod_id}" data-src="${v.src_key || state.src || ''}" data-name="${escapeHtml(v.vod_name)}">
+        <div class="poster">${srcTag}<img class="pimg"${v.vod_pic ? ` src="${posterUrl(v.vod_pic)}"` : ''} loading="lazy" alt="" onerror="this.remove()"></div>
         ${v.vod_remarks ? `<span class="badge">${escapeHtml(v.vod_remarks)}</span>` : ''}
         <div class="meta">
           <div class="name" title="${escapeHtml(v.vod_name)}">${escapeHtml(v.vod_name)}</div>
@@ -446,6 +446,37 @@
     }).join('');
     g.querySelectorAll('.card').forEach((el) => {
       el.addEventListener('click', () => openDetail(el.dataset.id, { play: true }, el.dataset.src || state.src));
+    });
+    lazyPosters(list);
+  }
+
+  // 首屏海报懒加载：列表先渲染，无图项按源批量请求 /api/poster 后回填，避免补图阻塞整页
+  function lazyPosters(list) {
+    const groups = new Map();
+    list.forEach((v) => {
+      if (v.vod_pic) return;
+      const key = v.src_key || state.src;
+      if (!key) return;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(v.vod_id);
+    });
+    groups.forEach((ids, key) => {
+      const uniq = Array.from(new Set(ids)).slice(0, 60);
+      if (!uniq.length) return;
+      const params = new URLSearchParams({ src: key, ids: uniq.join(',') });
+      if (PRO_MODE) { params.set('mode', 'pro'); params.set('pwd', localStorage.getItem('vb_pro_pwd') || ''); }
+      apiFetch('/api/poster?' + params.toString()).then((map) => {
+        if (!map || typeof map !== 'object') return;
+        Object.keys(map).forEach((id) => {
+          const sel = '.card[data-id="' + String(id).replace(/"/g, '') + '"][data-src="' + String(key).replace(/"/g, '') + '"]';
+          const card = document.querySelector(sel);
+          if (card) {
+            const img = card.querySelector('img.pimg');
+            if (img && !img.getAttribute('src')) img.src = posterUrl(map[id]);
+          }
+          list.forEach((v) => { if (String(v.vod_id) === String(id) && (v.src_key || state.src) === key) v.vod_pic = map[id]; });
+        });
+      }).catch(() => {});
     });
   }
 
