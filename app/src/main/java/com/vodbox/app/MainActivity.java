@@ -45,6 +45,12 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public class MainActivity extends Activity {
 
@@ -393,6 +399,59 @@ public class MainActivity extends Activity {
         return apkUrl;
     }
 
+    // 更新包下载的多域名优选：并发 HEAD 测速，选择最快可用的镜像域名（下载路径保持不变）
+    private static final String[] UPDATE_MIRROR_HOSTS = {
+            "tvgg.de5.net", "tvdd.us.ci", "ttys.cn.mt", "vod-box.pages.dev"
+    };
+
+    private String pickFastestUpdateUrl(final String originalUrl) {
+        if (originalUrl == null) return originalUrl;
+        final String path;
+        final String originalHost;
+        try {
+            URL u = new URL(originalUrl);
+            originalHost = u.getHost();
+            path = originalUrl.substring(originalUrl.indexOf(originalHost) + originalHost.length());
+        } catch (Exception e) {
+            return originalUrl;
+        }
+        ExecutorService pool = Executors.newFixedThreadPool(UPDATE_MIRROR_HOSTS.length);
+        List<Future<Object[]>> futures = new ArrayList<Future<Object[]>>();
+        for (final String h : UPDATE_MIRROR_HOSTS) {
+            futures.add(pool.submit(new Callable<Object[]>() {
+                @Override
+                public Object[] call() {
+                    long t0 = System.currentTimeMillis();
+                    try {
+                        HttpURLConnection c = (HttpURLConnection) new URL("https://" + h + path).openConnection();
+                        c.setConnectTimeout(3000);
+                        c.setReadTimeout(3000);
+                        c.setRequestMethod("HEAD");
+                        c.setInstanceFollowRedirects(true);
+                        int code = c.getResponseCode();
+                        c.disconnect();
+                        if (code >= 200 && code < 400) {
+                            return new Object[]{h, Long.valueOf(System.currentTimeMillis() - t0)};
+                        }
+                    } catch (Exception e) { /* 跳过不可用镜像 */ }
+                    return new Object[]{h, Long.valueOf(Long.MAX_VALUE)};
+                }
+            }));
+        }
+        pool.shutdown();
+        String best = null;
+        long bestT = Long.MAX_VALUE;
+        for (Future<Object[]> f : futures) {
+            try {
+                Object[] r = f.get();
+                long t = ((Long) r[1]).longValue();
+                if (t < bestT) { bestT = t; best = (String) r[0]; }
+            } catch (Exception e) { /* 忽略 */ }
+        }
+        String chosen = (best == null || bestT == Long.MAX_VALUE) ? originalHost : best;
+        return "https://" + chosen + path;
+    }
+
     private void downloadAndInstall(final String url) {
         final ProgressDialog pd = new ProgressDialog(this);
         pd.setMessage("正在下载更新包…");
@@ -407,11 +466,12 @@ public class MainActivity extends Activity {
                 File target = null;
                 String err = null;
                 try {
+                    String dlUrl = pickFastestUpdateUrl(url);
                     File dir = getExternalFilesDir("update");
                     if (dir == null) dir = getFilesDir();
                     if (!dir.exists()) dir.mkdirs();
                     target = new File(dir, "vodbox-update.apk");
-                    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                    HttpURLConnection c = (HttpURLConnection) new URL(dlUrl).openConnection();
                     c.setConnectTimeout(10000);
                     c.setReadTimeout(30000);
                     c.setInstanceFollowRedirects(true);

@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const net = require('net');
 const fs = require('fs');
 
 const app = express();
@@ -96,6 +97,72 @@ const RELAY_PROBE_TTL = 10 * 60 * 1000;   // 测速结果缓存 10 分钟
 let _relayPreferred = 0;
 let _relayRanked = null;                   // 按当前网络测速排序后的中转域名
 let _relayRankedAt = 0;
+
+// ---------- Cloudflare 优选（方法一：多域名测速；方法二：边缘 IP 优选）----------
+// 多域名：rankedRelayBases() 已按当前网络测速排序中转域名。
+// IP 优选：Cloudflare 为 Anycast，任一官方边缘 IP 均可服务其上的域名；
+// 采样一组候选 IP 现场测 TCP 443 延迟，选最快的直连（SNI 仍用域名，证书校验不受影响）。
+const CF_HOSTS = Array.from(new Set(
+  RELAY_BASES.map((u) => { try { return new URL(u).host; } catch (e) { return ''; } }).filter(Boolean)
+)).concat(['tvcc.de5.net']);
+const CF_IP_POOL = [
+  '104.16.0.1', '104.16.32.1', '104.16.64.1', '104.16.96.1', '104.16.128.1', '104.16.160.1', '104.16.192.1', '104.16.224.1',
+  '104.17.0.1', '104.18.0.1', '104.19.0.1', '104.20.0.1', '104.21.0.1', '104.22.0.1', '104.23.0.1',
+  '104.24.0.1', '104.25.0.1', '104.26.0.1', '104.27.0.1',
+  '172.64.0.1', '172.65.0.1', '172.66.0.1', '172.67.0.1', '172.68.0.1', '172.69.0.1', '172.70.0.1', '172.71.0.1',
+  '162.158.0.1', '162.159.0.1', '162.159.128.1',
+  '188.114.96.1', '188.114.97.1', '188.114.98.1', '188.114.99.1',
+  '198.41.128.1', '198.41.192.1',
+  '173.245.48.1', '173.245.49.1',
+];
+const CF_IP_TTL = 10 * 60 * 1000;          // IP 优选结果缓存 10 分钟
+const CF_IP_PROBE_TIMEOUT = 1500;
+let _cfBestIp = null;
+let _cfBestIpAt = 0;
+let _cfIpInflight = null;
+
+function tcpProbe(ip, port, timeout) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const sock = net.connect({ host: ip, port: port, family: 4 });
+    let done = false;
+    const finish = (ok) => {
+      if (done) return; done = true;
+      try { sock.destroy(); } catch (e) { /* ignore */ }
+      resolve(ok ? Date.now() - start : Infinity);
+    };
+    sock.setTimeout(timeout);
+    sock.on('connect', () => finish(true));
+    sock.on('timeout', () => finish(false));
+    sock.on('error', () => finish(false));
+  });
+}
+
+async function probeCfIps(force) {
+  const now = Date.now();
+  if (!force && _cfBestIp && now - _cfBestIpAt < CF_IP_TTL) return _cfBestIp;
+  if (_cfIpInflight) return _cfIpInflight;
+  _cfIpInflight = (async () => {
+    try {
+      const results = await Promise.all(CF_IP_POOL.map(async (ip) => ({ ip: ip, t: await tcpProbe(ip, 443, CF_IP_PROBE_TIMEOUT) })));
+      const ok = results.filter((r) => isFinite(r.t)).sort((a, b) => a.t - b.t);
+      if (ok.length) {
+        _cfBestIp = ok[0].ip;
+        _cfBestIpAt = Date.now();
+        console.log('[cf-ip] 优选 IP ' + _cfBestIp + '（' + ok[0].t + 'ms，候选 ' + ok.length + ' 个可达）');
+      }
+    } catch (e) { /* 保留旧值 */ }
+    return _cfBestIp;
+  })();
+  try { return await _cfIpInflight; } finally { _cfIpInflight = null; }
+}
+
+// 仅对 Cloudflare 域名返回优选 IP 的 lookup；其他域名返回 undefined 使用系统 DNS
+function cfLookupFor(host) {
+  if (!_cfBestIp || !host) return undefined;
+  if (!CF_HOSTS.some((h) => host === h || host.endsWith('.' + h))) return undefined;
+  return (h, opts, cb) => cb(null, _cfBestIp, 4);
+}
 
 function isPublicHttpUrl(u) {
   if (!/^https?:\/\//i.test(u)) return false;
@@ -237,6 +304,7 @@ const agent = new https.Agent({ keepAlive: true, maxSockets: 64 });
 function fetchBufDirect(url, { referer, timeout = 15000, headers = {} } = {}) {
   const u = new URL(url);
   const mod = u.protocol === 'https:' ? https : http;
+  const lookup = u.protocol === 'https:' ? cfLookupFor(u.hostname) : undefined;
   const opts = {
     headers: {
       'User-Agent': UA,
@@ -246,6 +314,7 @@ function fetchBufDirect(url, { referer, timeout = 15000, headers = {} } = {}) {
     },
     method: 'GET',
     agent: u.protocol === 'https:' ? agent : undefined,
+    ...(lookup ? { lookup } : {}),
   };
   return new Promise((resolve, reject) => {
     const req = mod.request(u, opts, (res) => {
@@ -853,6 +922,7 @@ startRemoteConfigRefresh();
 const HOST = process.platform === 'android' ? '127.0.0.1' : undefined;
 app.listen(PORT, HOST, () => {
   console.log(`VOD Box running at http://${HOST || 'localhost'}:${PORT}`);
-  // 后台预热中转测速（不阻塞启动），让播放等同步路径也能用最快域名
+  // 后台预热中转测速与 CF 优选 IP（不阻塞启动），让数据/播放/下载走最快线路
   setTimeout(() => { rankedRelayBases().catch(() => {}); }, 3000);
+  setTimeout(() => { probeCfIps().catch(() => {}); }, 3500);
 });
