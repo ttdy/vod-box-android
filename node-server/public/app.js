@@ -230,9 +230,9 @@
   function loadHistory() {
     try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch (e) { return []; }
   }
-  function saveHistoryList(list) {
+  function saveHistoryList(list, touchSync) {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, 30)));
-    try { localStorage.setItem('vb_sync_mt', String(Date.now())); } catch (e) { }
+    if (touchSync !== false) { try { localStorage.setItem('vb_sync_mt', String(Date.now())); } catch (e) { } }
   }
   function addHistory(rec) {
     const list = loadHistory().filter((h) => !(h.id === rec.id && h.src === rec.src && h.epIndex === rec.epIndex));
@@ -243,10 +243,12 @@
     const list = loadHistory();
     const it = list.find((h) => h.id === id && h.src === src && h.epIndex === epIndex);
     if (it) {
-      it.time = Math.round(time);
-      it.duration = Math.round(duration);
+      const t = Math.round(time), d = Math.round(duration);
+      if (it.time === t && it.duration === d) return;
+      it.time = t;
+      it.duration = d;
       it.updatedAt = Date.now();
-      saveHistoryList(list);
+      saveHistoryList(list, false);
     }
   }
   function findHistory(id, src) {
@@ -901,10 +903,15 @@
   }
   function syncStartTick() {
     if (syncTimerId) return;
-    syncTimerId = setInterval(syncTick, 5000);
+    syncTimerId = setInterval(syncTick, 30000);
   }
 
-  function syncSnap() { return JSON.stringify({ h: loadHistory(), f: loadFavorites() }); }
+  function syncSnap() {
+    return JSON.stringify({
+      h: loadHistory().map((x) => [x.id, x.src, x.epIndex]),
+      f: loadFavorites().map((x) => [x.id, x.src]),
+    });
+  }
 
   function syncUrl(q) { return (typeof api === 'function') ? api(q) : q; }
 
@@ -981,7 +988,7 @@
     const snap = syncSnap();
     if (snap === syncLastSnap) return;
     clearTimeout(syncPushTimer);
-    syncPushTimer = setTimeout(function () { syncPush(false); }, 3000);
+    syncPushTimer = setTimeout(function () { syncPush(false); }, 10000);
   }
 
   function syncOpenPanel() {
