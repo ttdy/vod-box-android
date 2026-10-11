@@ -88,7 +88,7 @@ jobs:
           git clone --depth 1 "https://x-access-token:${VOD_PAGES_TOKEN}@github.com/ttdy/ttdy.github.io.git" /tmp/pages-site
           cd /tmp/pages-site
           BASE="https://tvgg.de5.net/dl/main/"
-          jq -n --argjson vc "$VCODE" --arg v "$VERSION" --arg note "$NOTE" --arg b "$BASE" '{versionCode:$vc, versionName:$v, note:$note, apk:($b+"app-arm64-v8a-release.apk"), apkArm64:($b+"app-arm64-v8a-release.apk"), apkArm:($b+"app-armeabi-v7a-release.apk")}' > update.json
+          jq -n --argjson vc "$VCODE" --arg v "$VERSION" --arg note "$NOTE" --arg b "$BASE" '{versionCode:$vc, versionName:$v, note:$note, apk:($b+"app-arm64-v8a-release.apk?v="+$v), apkArm64:($b+"app-arm64-v8a-release.apk?v="+$v), apkArm:($b+"app-armeabi-v7a-release.apk?v="+$v)}' > update.json
           git config user.name "vod-box-ci"
           git config user.email "ci@vod-box.local"
           git add update.json
