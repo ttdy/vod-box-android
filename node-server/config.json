@@ -4,14 +4,41 @@
     "https://vod-box.pages.dev/abc.json",
     "https://tvcc.de5.net/abc.json"
   ],
+  "maotai": {
+    "name": "茅台资源",
+    "api": "https://caiji.maotaizy.cc/api.php/provide/vod",
+    "format": "json",
+    "cats": [
+      {
+        "id": "55",
+        "name": "擦边短剧"
+      },
+      {
+        "id": "37",
+        "name": "短剧大全"
+      },
+      {
+        "id": "2",
+        "name": "电视剧"
+      },
+      {
+        "id": "3",
+        "name": "综艺"
+      },
+      {
+        "id": "4",
+        "name": "动漫"
+      }
+    ]
+  },
   "feifan": {
     "name": "非凡资源",
     "api": "https://cj.ffzyapi.com/api.php/provide/vod/",
     "format": "json",
     "cats": [
       {
-        "id": "1",
-        "name": "电影"
+        "id": "36",
+        "name": "短剧"
       },
       {
         "id": "2",
@@ -45,8 +72,8 @@
         "name": "综艺"
       },
       {
-        "id": "4",
-        "name": "动漫"
+        "id": "74",
+        "name": "擦边短剧"
       }
     ]
   },
@@ -64,12 +91,12 @@
         "name": "电视剧"
       },
       {
-        "id": "3",
-        "name": "综艺"
+        "id": "37",
+        "name": "短剧大全"
       },
       {
-        "id": "4",
-        "name": "动漫"
+        "id": "50",
+        "name": "擦边短剧"
       }
     ]
   },
@@ -87,59 +114,118 @@
         "name": "电视剧"
       },
       {
-        "id": "3",
-        "name": "综艺"
+        "id": "46",
+        "name": "短剧"
       },
       {
-        "id": "4",
-        "name": "动漫"
+        "id": "52",
+        "name": "AI漫剧"
       }
     ]
   },
   "_pro": {
-    "ruyi": {
-      "name": "如意资源",
-      "api": "https://cj.rycjapi.com/api.php/provide/vod/",
+    "fqzy": {
+      "name": "fqzy资源",
+      "api": "https://fqzy.me/api.php/provide/vod/",
       "format": "json",
       "cats": [
         {
-          "id": "1",
-          "name": "电影"
+          "id": "10",
+          "name": "黑料网曝"
         },
         {
-          "id": "2",
-          "name": "电视剧"
+          "id": "8",
+          "name": "乱伦毁三观"
         },
         {
-          "id": "3",
-          "name": "综艺"
+          "id": "7",
+          "name": "国产大制作"
         },
         {
-          "id": "4",
-          "name": "动漫"
+          "id": "27",
+          "name": "无码流出"
+        },
+        {
+          "id": "9",
+          "name": "主播女网红"
+        },
+        {
+          "id": "20",
+          "name": "欧美精品"
+        },
+        {
+          "id": "36",
+          "name": "重口猎奇"
+        },
+        {
+          "id": "37",
+          "name": "东京热"
+        },
+        {
+          "id": "21",
+          "name": "学生妹"
+        },
+        {
+          "id": "32",
+          "name": "韩国直播"
         }
       ]
     },
-    "liangzi": {
-      "name": "量子资源",
-      "api": "http://cj.lziapi.com/api.php/provide/vod/",
+    "senlin": {
+      "name": "senlin资源",
+      "api": "https://slapibf.com/api.php/provide/vod",
       "format": "json",
       "cats": [
         {
-          "id": "1",
+          "id": "20",
+          "name": "精品推荐"
+        },
+        {
+          "id": "31",
+          "name": "萝莉少女"
+        },
+        {
+          "id": "36",
+          "name": "口交颜射"
+        },
+        {
+          "id": "45",
+          "name": "剧情介绍"
+        },
+        {
+          "id": "46",
+          "name": "多人多P"
+        },
+        {
+          "id": "56",
+          "name": "护士"
+        },
+        {
+          "id": "58",
+          "name": "网曝系列"
+        }
+      ]
+    },
+    "lsb": {
+      "name": "lsb资源",
+      "api": "https://apilsbzy3.com/api.php/provide/vod",
+      "format": "json",
+      "cats": [
+        {
+          "id": "29",
           "name": "电影"
         },
         {
-          "id": "2",
-          "name": "电视剧"
+          "id": "31",
+          "name": "明星换脸"
         },
         {
-          "id": "3",
-          "name": "综艺"
+          "id": "38",
+          "name": "网暴视频"
         },
         {
-          "id": "4",
-          "name": "动漫"
+          "id": "39",
+          "name": "解说"
         }
       ]
     }

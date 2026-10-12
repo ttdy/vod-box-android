@@ -988,7 +988,7 @@
     const snap = syncSnap();
     if (snap === syncLastSnap) return;
     clearTimeout(syncPushTimer);
-    syncPushTimer = setTimeout(function () { syncPush(false); }, 180000);
+    syncPushTimer = setTimeout(function () { syncPush(false); }, 300000);
   }
 
   function syncOpenPanel() {
