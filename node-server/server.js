@@ -634,6 +634,10 @@ function relayMedia(res, url, referer, extra) {
         if (pRes.headers[h]) res.setHeader(h, pRes.headers[h]);
       }
       res.setHeader('Access-Control-Allow-Origin', '*');
+      let finished = false;
+      res.on('finish', () => { finished = true; });
+      // 客户端中断（拖动进度条/切集）时释放上游连接，避免耗尽 keep-alive 连接池
+      res.on('close', () => { if (!finished) { try { pRes.destroy(); } catch (e) {} try { req.destroy(); } catch (e) {} } });
       pRes.pipe(res);
       pRes.on('error', () => { try { res.destroy(); } catch (e) {} });
     });
@@ -675,6 +679,10 @@ function proxyMedia(res, url, referer, extra) {
     }
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (pRes.statusCode === 304) { res.end(); return; }
+    let finished = false;
+    res.on('finish', () => { finished = true; });
+    // 客户端中断（拖动进度条/切集）时释放上游连接，避免耗尽 keep-alive 连接池
+    res.on('close', () => { if (!finished) { try { pRes.destroy(); } catch (e) {} try { req.destroy(); } catch (e) {} } });
     pRes.pipe(res);
     pRes.on('error', () => { try { res.destroy(); } catch (e) {} });
   });
