@@ -369,15 +369,27 @@ function looksBrokenBody(text, s) {
 
 // 直连超时：WiFi/运营商干扰下缩短到 5 秒，减少无效等待
 const DIRECT_TIMEOUT = 5000;
-// 直连失败冷却：某源直连近期失败过（被运营商/路由器干扰），一段时间内直接用中转，避免每次请求都白等超时
-const DIRECT_FAIL_COOLDOWN = 10 * 60 * 1000;
+// 直连失败冷却：某源连续多次直连失败后才短暂走中转。
+// 避免单次瞬时失败（如拖动进度条时的中断、采集站偶发抖动）就把整源拉黑；任一次直连成功即清零计数
+const DIRECT_FAIL_COOLDOWN = 90 * 1000;
+const DIRECT_FAIL_THRESHOLD = 3;
 const _directFailAt = Object.create(null);
+const _directFailCount = Object.create(null);
 
 function directBlocked(key) {
   return !!key && _directFailAt[key] && Date.now() - _directFailAt[key] < DIRECT_FAIL_COOLDOWN;
 }
-function markDirectFail(key) { if (key) _directFailAt[key] = Date.now(); }
-function markDirectOk(key) { if (key) delete _directFailAt[key]; }
+function markDirectFail(key) {
+  if (!key) return;
+  const n = (_directFailCount[key] || 0) + 1;
+  _directFailCount[key] = n;
+  if (n >= DIRECT_FAIL_THRESHOLD) _directFailAt[key] = Date.now();
+}
+function markDirectOk(key) {
+  if (!key) return;
+  delete _directFailAt[key];
+  delete _directFailCount[key];
+}
 
 // 经 CF 中转取一次文本，成功返回内容，失败返回空串
 async function relayTextOnce(url, referer, s) {
@@ -661,9 +673,12 @@ function proxyMedia(res, url, referer, extra) {
   if (referer) headers['Referer'] = referer;
   if (extra && extra.Range) headers['Range'] = extra.Range;
   let settled = false;
+  let clientGone = false;
   const fallback = () => {
     if (settled) return;
     settled = true;
+    // 客户端已断开（拖动进度条/切集）导致的失败不计为直连故障，避免误拉黑整源
+    if (clientGone) return;
     markDirectFail(key);
     if (!isPublicHttpUrl(url)) { try { res.status(502).send('stream error'); } catch (e) {} return; }
     relayMedia(res, url, referer, extra);
@@ -681,8 +696,8 @@ function proxyMedia(res, url, referer, extra) {
     if (pRes.statusCode === 304) { res.end(); return; }
     let finished = false;
     res.on('finish', () => { finished = true; });
-    // 客户端中断（拖动进度条/切集）时释放上游连接，避免耗尽 keep-alive 连接池
-    res.on('close', () => { if (!finished) { try { pRes.destroy(); } catch (e) {} try { req.destroy(); } catch (e) {} } });
+    // 客户端中断（拖动进度条/切集）时释放上游连接，避免耗尽 keep-alive 连接池；并标记以免误判为直连故障
+    res.on('close', () => { if (!finished) { clientGone = true; try { pRes.destroy(); } catch (e) {} try { req.destroy(); } catch (e) {} } });
     pRes.pipe(res);
     pRes.on('error', () => { try { res.destroy(); } catch (e) {} });
   });
