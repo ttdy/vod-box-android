@@ -299,7 +299,7 @@ const DEFAULT_SOURCES_PRO = {
 let SOURCES_PRO = Object.assign({}, DEFAULT_SOURCES_PRO, _cfg.sourcesPro);
 
 // ---------- 基础工具 ----------
-const agent = new https.Agent({ keepAlive: true, maxSockets: 64 });
+const agent = new https.Agent({ keepAlive: true, maxSockets: 64, maxFreeSockets: 4 });
 
 function fetchBufDirect(url, { referer, timeout = 15000, headers = {} } = {}) {
   const u = new URL(url);
@@ -369,6 +369,9 @@ function looksBrokenBody(text, s) {
 
 // 直连超时：WiFi/运营商干扰下缩短到 5 秒，减少无效等待
 const DIRECT_TIMEOUT = 5000;
+// 上游媒体流空闲看门狗：响应建立后长时间无数据（或客户端长时间不消费导致背压）即断开，
+// 避免卡死的连接占满按 host 的 keep-alive 连接池，导致整个采集源无法播放
+const MEDIA_IDLE_TIMEOUT = 30000;
 // 直连失败冷却：某源连续多次直连失败后才短暂走中转。
 // 避免单次瞬时失败（如拖动进度条时的中断、采集站偶发抖动）就把整源拉黑；任一次直连成功即清零计数
 const DIRECT_FAIL_COOLDOWN = 90 * 1000;
@@ -647,11 +650,18 @@ function relayMedia(res, url, referer, extra) {
       }
       res.setHeader('Access-Control-Allow-Origin', '*');
       let finished = false;
-      res.on('finish', () => { finished = true; });
+      let idle = null;
+      const stopIdle = () => { if (idle) { clearTimeout(idle); idle = null; } };
+      const onIdle = () => { stopIdle(); try { pRes.destroy(); } catch (e) {} try { res.destroy(); } catch (e) {} };
+      const armIdle = () => { if (idle) idle.refresh(); else idle = setTimeout(onIdle, MEDIA_IDLE_TIMEOUT); };
+      res.on('finish', () => { finished = true; stopIdle(); });
       // 客户端中断（拖动进度条/切集）时释放上游连接，避免耗尽 keep-alive 连接池
-      res.on('close', () => { if (!finished) { try { pRes.destroy(); } catch (e) {} try { req.destroy(); } catch (e) {} } });
-      pRes.pipe(res);
-      pRes.on('error', () => { try { res.destroy(); } catch (e) {} });
+      res.on('close', () => { stopIdle(); if (!finished) { try { pRes.destroy(); } catch (e) {} try { req.destroy(); } catch (e) {} } });
+      armIdle();
+      pRes.on('data', (chunk) => { armIdle(); if (!res.write(chunk)) pRes.pause(); });
+      res.on('drain', () => { try { pRes.resume(); } catch (e) {} });
+      pRes.on('end', () => { stopIdle(); try { res.end(); } catch (e) {} });
+      pRes.on('error', () => { stopIdle(); try { res.destroy(); } catch (e) {} });
     });
     req.setTimeout(45000, () => req.destroy(new Error('timeout')));
     req.on('error', () => { if (!settled) { settled = true; tryAt(i + 1); } });
@@ -687,7 +697,8 @@ function proxyMedia(res, url, referer, extra) {
     if ((pRes.statusCode || 0) >= 400) { pRes.resume(); fallback(); return; }
     settled = true;
     markDirectOk(key);
-    req.setTimeout(0);
+    // 响应建立后关闭 5s 连接超时，改由空闲看门狗管理：上游长时间无数据或客户端长时间不消费即断开，
+    // 避免卡死连接占满该 host 的连接池（maxSockets=64 按 host 限制）
     res.statusCode = pRes.statusCode || 200;
     for (const h of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control']) {
       if (pRes.headers[h]) res.setHeader(h, pRes.headers[h]);
@@ -695,11 +706,18 @@ function proxyMedia(res, url, referer, extra) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (pRes.statusCode === 304) { res.end(); return; }
     let finished = false;
-    res.on('finish', () => { finished = true; });
+    let idle = null;
+    const stopIdle = () => { if (idle) { clearTimeout(idle); idle = null; } };
+    const onIdle = () => { stopIdle(); try { pRes.destroy(); } catch (e) {} try { res.destroy(); } catch (e) {} };
+    const armIdle = () => { if (idle) idle.refresh(); else idle = setTimeout(onIdle, MEDIA_IDLE_TIMEOUT); };
+    res.on('finish', () => { finished = true; stopIdle(); });
     // 客户端中断（拖动进度条/切集）时释放上游连接，避免耗尽 keep-alive 连接池；并标记以免误判为直连故障
-    res.on('close', () => { if (!finished) { clientGone = true; try { pRes.destroy(); } catch (e) {} try { req.destroy(); } catch (e) {} } });
-    pRes.pipe(res);
-    pRes.on('error', () => { try { res.destroy(); } catch (e) {} });
+    res.on('close', () => { stopIdle(); if (!finished) { clientGone = true; try { pRes.destroy(); } catch (e) {} try { req.destroy(); } catch (e) {} } });
+    armIdle();
+    pRes.on('data', (chunk) => { armIdle(); if (!res.write(chunk)) pRes.pause(); });
+    res.on('drain', () => { try { pRes.resume(); } catch (e) {} });
+    pRes.on('end', () => { stopIdle(); try { res.end(); } catch (e) {} });
+    pRes.on('error', () => { stopIdle(); try { res.destroy(); } catch (e) {} });
   });
   req.setTimeout(DIRECT_TIMEOUT, () => req.destroy(new Error('direct timeout')));
   req.on('error', fallback);
