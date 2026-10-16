@@ -89,7 +89,7 @@ jobs:
               --file "$apk" \
               --content-type application/vnd.android.package-archive \
               --content-disposition "attachment; filename=${name}" \
-              --cache-control "public, max-age=600"
+              --cache-control "public, max-age=31536000, immutable"
           done
 
       - name: 同步 update.json（一键发版升级源）
