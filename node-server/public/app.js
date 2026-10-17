@@ -793,7 +793,7 @@
   }
 
   // ---------- 搜索记录 ----------
-  const HIST_KEY_S = 'vb_search_hist';
+  const HIST_KEY_S = 'vb_search_hist' + MODE_SUFFIX;   // 普通区/高级区搜索记录分开
   function getSearchHist() {
     try { return JSON.parse(localStorage.getItem(HIST_KEY_S) || '[]'); } catch (e) { return []; }
   }
