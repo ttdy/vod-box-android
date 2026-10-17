@@ -874,11 +874,12 @@
   }
   init();
 
-  // ---------- 云同步（历史/收藏存云端，支持多设备与清数据后恢复） ----------
+  // ---------- 云同步（历史/收藏/搜索记录存云端，支持多设备与清数据后恢复） ----------
   const SYNC_CODE_KEY = 'vb_sync_code';
   const SYNC_ON_KEY = 'vb_sync_on';
   const SYNC_MAX_H = 30;
   const SYNC_MAX_F = 100;
+  const SYNC_MAX_S = 10;
   let syncPushTimer = null;
   let syncLastSnap = '';
 
@@ -897,9 +898,14 @@
   function syncApply(data, mt) {
     localStorage.setItem(HISTORY_KEY, JSON.stringify((Array.isArray(data.history) ? data.history : []).slice(0, SYNC_MAX_H)));
     localStorage.setItem(FAV_KEY, JSON.stringify((Array.isArray(data.favorites) ? data.favorites : []).slice(0, SYNC_MAX_F)));
+    if (Array.isArray(data.searchHistory)) {
+      const sh = data.searchHistory.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()).slice(0, SYNC_MAX_S);
+      localStorage.setItem(HIST_KEY_S, JSON.stringify(sh));
+    }
     localStorage.setItem(SYNC_MT_KEY, String(mt));
     try { renderHistory(); } catch (e) { }
     try { renderFavorites(); } catch (e) { }
+    try { const sb = document.getElementById('searchHist'); if (sb && !sb.hidden) renderSearchHist(); } catch (e) { }
   }
   function syncStartTick() {
     if (syncTimerId) return;
@@ -910,6 +916,7 @@
     return JSON.stringify({
       h: loadHistory().map((x) => [x.id, x.src, x.epIndex]),
       f: loadFavorites().map((x) => [x.id, x.src]),
+      s: getSearchHist(),
     });
   }
 
@@ -927,7 +934,8 @@
   function syncRemoteCount(d) {
     const h = Array.isArray(d.history) ? d.history.length : 0;
     const f = Array.isArray(d.favorites) ? d.favorites.length : 0;
-    return h + f;
+    const s = Array.isArray(d.searchHistory) ? d.searchHistory.length : 0;
+    return h + f + s;
   }
 
   // 自动同步：云端更新则恢复，本地更新才上传；本地为空时绝不上传，避免覆盖云端
@@ -938,9 +946,10 @@
       const remoteMt = Number(data.updatedAt) || 0;
       const remoteHas = syncRemoteCount(data) > 0;
       const localMt = syncMt();
-      const localHas = loadHistory().length > 0 || loadFavorites().length > 0;
+      const localHas = loadHistory().length > 0 || loadFavorites().length > 0 || getSearchHist().length > 0;
       if (remoteHas && remoteMt > localMt) {
         syncApply(data, remoteMt);
+        if (!Array.isArray(data.searchHistory) && getSearchHist().length) { await syncPush(true); }
         if (!silent) syncSetStatus('已从云端同步 ' + new Date().toLocaleTimeString(), true);
       } else if (localHas && (localMt > remoteMt || !remoteHas)) {
         await syncPush(false);
@@ -961,13 +970,14 @@
     if (!syncEnabled()) return false;
     const history = loadHistory();
     const favorites = loadFavorites();
-    if (!force && !history.length && !favorites.length) return false;
+    const searchHistory = getSearchHist();
+    if (!force && !history.length && !favorites.length && !searchHistory.length) return false;
     try {
       const updatedAt = Date.now();
       const r = await fetch(syncUrl('/api/sync?key=' + encodeURIComponent(syncCode()) + '&mode=' + syncMode()), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ history: history, favorites: favorites, updatedAt: updatedAt }),
+        body: JSON.stringify({ history: history, favorites: favorites, searchHistory: searchHistory, updatedAt: updatedAt }),
       });
       if (!r.ok) throw new Error('http ' + r.status);
       let serverMt = updatedAt;
@@ -1011,14 +1021,14 @@
   // 保存：把本机记录上传到云端
   async function syncBackup() {
     if (!syncReadCode()) return;
-    if (!loadHistory().length && !loadFavorites().length) {
+    if (!loadHistory().length && !loadFavorites().length && !getSearchHist().length) {
       syncSetStatus('本机暂无记录，未上传', false);
       return;
     }
     syncSetStatus('正在检查云端…', true);
     try {
       const remote = await syncFetchRemote();
-      const ln = loadHistory().length + loadFavorites().length;
+      const ln = loadHistory().length + loadFavorites().length + getSearchHist().length;
       const rn = syncRemoteCount(remote);
       if (rn > ln && !confirm('云端已有 ' + rn + ' 条记录，本机有 ' + ln + ' 条。\n继续保存会用本机记录覆盖云端，确定吗？')) {
         syncSetStatus('已取消保存', false);
