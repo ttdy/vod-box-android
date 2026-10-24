@@ -54,14 +54,20 @@ function isSource(v) {
   return !!v && typeof v === 'object' && typeof v.api === 'string';
 }
 
+function isIPv4(s) {
+  return typeof s === 'string' && /^(?:\d{1,3}\.){3}\d{1,3}$/.test(s.trim()) && s.trim().split('.').every((n) => Number(n) <= 255);
+}
+
 function parseConfig(raw) {
-  const out = { remoteConfigUrls: [], sources: {}, sourcesPro: {} };
+  const out = { remoteConfigUrls: [], sources: {}, sourcesPro: {}, cfIpPool: [] };
   if (!raw || typeof raw !== 'object') return out;
   for (const k of Object.keys(raw)) {
     const v = raw[k];
     if (k === 'remoteConfigUrl') {
       const add = (one) => { if (typeof one === 'string' && one.trim()) out.remoteConfigUrls.push(one.trim()); };
       if (Array.isArray(v)) v.forEach(add); else add(v);
+    } else if (k === 'cfIpPool' && Array.isArray(v)) {
+      out.cfIpPool = v.filter(isIPv4).map((s) => s.trim());
     } else if (k === '_pro' && v && typeof v === 'object') {
       for (const pk of Object.keys(v)) if (isSource(v[pk])) out.sourcesPro[pk] = v[pk];
     } else if (isSource(v)) {
@@ -105,16 +111,22 @@ let _relayRankedAt = 0;
 const CF_HOSTS = Array.from(new Set(
   RELAY_BASES.map((u) => { try { return new URL(u).host; } catch (e) { return ''; } }).filter(Boolean)
 )).concat(['tvcc.de5.net']);
-const CF_IP_POOL = [
-  '104.16.0.1', '104.16.32.1', '104.16.64.1', '104.16.96.1', '104.16.128.1', '104.16.160.1', '104.16.192.1', '104.16.224.1',
-  '104.17.0.1', '104.18.0.1', '104.19.0.1', '104.20.0.1', '104.21.0.1', '104.22.0.1', '104.23.0.1',
-  '104.24.0.1', '104.25.0.1', '104.26.0.1', '104.27.0.1',
-  '172.64.0.1', '172.65.0.1', '172.66.0.1', '172.67.0.1', '172.68.0.1', '172.69.0.1', '172.70.0.1', '172.71.0.1',
-  '162.158.0.1', '162.159.0.1', '162.159.128.1',
-  '188.114.96.1', '188.114.97.1', '188.114.98.1', '188.114.99.1',
+// 内置兜底池；远程 abc.json 的 cfIpPool 可覆盖（远程失败沿用内置）
+const BUILTIN_CF_IP_POOL = [
+  '104.16.160.1', '104.16.192.1', '104.16.224.1',
+  '188.114.98.1', '188.114.99.1',
   '198.41.128.1', '198.41.192.1',
   '173.245.48.1', '173.245.49.1',
+  '104.21.30.178', '104.21.86.107', '104.21.2.72',
+  '104.16.32.1', '104.16.64.1', '104.16.96.1', '104.16.128.1',
+  '104.17.0.1', '104.18.0.1', '104.19.0.1', '104.20.0.1',
+  '104.21.0.1', '104.22.0.1', '104.23.0.1',
+  '104.24.0.1', '104.25.0.1', '104.26.0.1', '104.27.0.1',
+  '162.158.0.1', '162.159.0.1', '162.159.128.1',
+  '188.114.96.1', '188.114.97.1',
+  '104.16.0.1',
 ];
+let CF_IP_POOL = _cfg.cfIpPool.length ? _cfg.cfIpPool : BUILTIN_CF_IP_POOL;
 const CF_IP_TTL = 10 * 60 * 1000;          // IP 优选结果缓存 10 分钟
 const CF_IP_PROBE_TIMEOUT = 1500;
 let _cfBestIp = null;
@@ -141,7 +153,11 @@ function tcpProbe(ip, port, timeout) {
 async function probeCfIps(force) {
   const now = Date.now();
   if (!force && _cfBestIp && now - _cfBestIpAt < CF_IP_TTL) return _cfBestIp;
-  if (_cfIpInflight) return _cfIpInflight;
+  if (_cfIpInflight) {
+    if (!force) return _cfIpInflight;
+    try { await _cfIpInflight; } catch (e) { /* ignore */ }
+    return probeCfIps(true);
+  }
   _cfIpInflight = (async () => {
     try {
       const results = await Promise.all(CF_IP_POOL.map(async (ip) => ({ ip: ip, t: await tcpProbe(ip, 443, CF_IP_PROBE_TIMEOUT) })));
@@ -246,6 +262,13 @@ async function refreshFromRemote(force) {
         // 远程配置为权威：远程提供的源集合整体替换本地；某集合为空时保留本地兜底
         if (Object.keys(rem.sources).length) SOURCES = rem.sources;
         if (Object.keys(rem.sourcesPro).length) SOURCES_PRO = rem.sourcesPro;
+        if (rem.cfIpPool.length && JSON.stringify(rem.cfIpPool) !== JSON.stringify(CF_IP_POOL)) {
+          CF_IP_POOL = rem.cfIpPool;
+          _cfBestIp = null;
+          _cfBestIpAt = 0;
+          console.log(`[cf-ip] 远程优选池已更新(${CF_IP_POOL.length} 个)`);
+          probeCfIps(true).catch(() => {});
+        }
         _remoteFetchedAt = Date.now();
         _remoteReady = true;
         console.log(`[config] 远程接口配置已生效(${Object.keys(rem.sources).length} 个源): ${rcUrl}`);
