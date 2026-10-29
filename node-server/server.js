@@ -110,7 +110,7 @@ let _relayRankedAt = 0;
 // 采样一组候选 IP 现场测 TCP 443 延迟，选最快的直连（SNI 仍用域名，证书校验不受影响）。
 const CF_HOSTS = Array.from(new Set(
   RELAY_BASES.map((u) => { try { return new URL(u).host; } catch (e) { return ''; } }).filter(Boolean)
-)).concat(['tvcc.de5.net']);
+));
 // 内置兜底池；远程 abc.json 的 cfIpPool 可覆盖（远程失败沿用内置）
 const BUILTIN_CF_IP_POOL = [
   '104.16.160.1', '104.16.192.1', '104.16.224.1',
