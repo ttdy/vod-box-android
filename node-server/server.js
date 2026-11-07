@@ -4,6 +4,7 @@ const http = require('http');
 const https = require('https');
 const net = require('net');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -100,6 +101,12 @@ const RELAY_BASES = [
 const RELAY_TOKEN = 'vb-relay-7c41f0a9';
 const RELAY_TIMEOUT = 6000;
 const RELAY_PROBE_TTL = 10 * 60 * 1000;   // 测速结果缓存 10 分钟
+const PHP_HOSTS = [
+  'https://tttv.66ghz.com',
+  'https://tttv.10001mb.com',
+];
+const PHP_COOKIE_TTL = 5 * 60 * 60 * 1000;
+const _phpCookies = Object.create(null);
 let _relayPreferred = 0;
 let _relayRanked = null;                   // 按当前网络测速排序后的中转域名
 let _relayRankedAt = 0;
@@ -561,12 +568,85 @@ function normalizeItem(v) {
   };
 }
 
-async function fetchVod(src, params, sources = SOURCES) {
-  const s = sources[src];
-  if (!s) throw new Error('未知采集源');
-  const q = new URLSearchParams(params);
-  const url = s.api + (s.api.includes('?') ? '&' : '?') + q.toString();
-  const text = await fetchTextChecked(url, s);
+function phpChallengeCookie(html) {
+  if (!html || html.indexOf('__test') < 0) return '';
+  const nums = [];
+  const re = /toNumbers\("([0-9a-f]+)"\)/gi;
+  let m;
+  while ((m = re.exec(html))) nums.push(m[1]);
+  if (nums.length < 3) return '';
+  try {
+    const dec = crypto.createDecipheriv('aes-128-cbc', Buffer.from(nums[0], 'hex'), Buffer.from(nums[1], 'hex'));
+    dec.setAutoPadding(false);
+    return Buffer.concat([dec.update(Buffer.from(nums[2], 'hex')), dec.final()]).toString('hex');
+  } catch (e) { return ''; }
+}
+
+function looksPhpChallenge(text) {
+  return !!(text && /slowAES|__test=/.test(text) && /toNumbers\(/.test(text));
+}
+
+async function phpCookieFor(origin, force) {
+  const now = Date.now();
+  const rec = _phpCookies[origin];
+  if (!force && rec && rec.v && now - rec.at < PHP_COOKIE_TTL) return rec.v;
+  let html = '';
+  try { html = await fetchTextDirect(origin + '/', { timeout: 8000 }); } catch (e) { html = ''; }
+  const v = phpChallengeCookie(html);
+  if (v) _phpCookies[origin] = { v: v, at: now };
+  return v || (rec && rec.v) || '';
+}
+
+async function phpFetchText(url, timeout) {
+  const origin = originOf(url);
+  let cookie = await phpCookieFor(origin, false);
+  const once = (ck) => fetchTextDirect(url, {
+    timeout: timeout || 8000,
+    headers: ck ? { Cookie: '__test=' + ck } : {},
+  });
+  let text = '';
+  try { text = await once(cookie); } catch (e) { text = ''; }
+  if (looksPhpChallenge(text)) {
+    cookie = await phpCookieFor(origin, true);
+    try { text = await once(cookie); } catch (e) { text = ''; }
+  }
+  return looksPhpChallenge(text) ? '' : text;
+}
+
+async function fetchVodViaPhp(src, params) {
+  const ac = String(params.ac || 'list');
+  const action = (ac === 'detail' || ac === 'videolist') ? 'detail' : 'list';
+  const q = new URLSearchParams({ action: action, src: src });
+  if (params.t) q.set('t', params.t);
+  if (params.pg) q.set('pg', params.pg);
+  if (params.wd) q.set('wd', params.wd);
+  if (params.ids) q.set('ids', params.ids);
+  if (params.limit) q.set('limit', params.limit);
+  for (const host of PHP_HOSTS) {
+    try {
+      const text = await phpFetchText(host + '/api.php?' + q.toString(), 8000);
+      if (!text) continue;
+      const data = JSON.parse(text);
+      if (action === 'detail') {
+        const item = data && data.detail;
+        if (!item) continue;
+        return { page: 1, pagecount: 1, limit: 1, total: 1, list: [normalizeItem(item)] };
+      }
+      if (data && Array.isArray(data.list) && data.list.length) {
+        return {
+          page: +data.page || 1,
+          pagecount: +data.pagecount || 1,
+          limit: +data.limit || 20,
+          total: +data.total || 0,
+          list: data.list.map(normalizeItem),
+        };
+      }
+    } catch (e) { /* 试下一个 */ }
+  }
+  return null;
+}
+
+function parseVodBody(s, text) {
   let items = [];
   let page = 1, pagecount = 1, limit = 20, total = 0;
   if (s.format === 'rss') {
@@ -590,6 +670,24 @@ async function fetchVod(src, params, sources = SOURCES) {
     total = +data.total || 0;
   }
   return { page, pagecount, limit, total, list: items.map(normalizeItem) };
+}
+
+async function fetchVod(src, params, sources = SOURCES) {
+  const s = sources[src];
+  if (!s) throw new Error('未知采集源');
+  const phpTask = fetchVodViaPhp(src, params);
+  const directTask = (async () => {
+    const q = new URLSearchParams(params);
+    const url = s.api + (s.api.includes('?') ? '&' : '?') + q.toString();
+    try {
+      const text = await fetchTextChecked(url, s);
+      if (!text || looksBrokenBody(text, s)) return null;
+      return parseVodBody(s, text);
+    } catch (e) { return null; }
+  })();
+  const v = await firstNonNull([directTask, phpTask]);
+  if (v) return v;
+  throw new Error('采集站连接失败');
 }
 
 // ---------- 播放地址解析 ----------
