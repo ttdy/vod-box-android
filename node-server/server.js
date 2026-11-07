@@ -613,10 +613,11 @@ async function phpFetchText(url, timeout) {
   return looksPhpChallenge(text) ? '' : text;
 }
 
-async function fetchVodViaPhp(src, params) {
+async function fetchVodViaPhp(src, params, pro) {
   const ac = String(params.ac || 'list');
   const action = (ac === 'detail' || ac === 'videolist') ? 'detail' : 'list';
   const q = new URLSearchParams({ action: action, src: src });
+  if (pro) { q.set('mode', 'pro'); q.set('pwd', PRO_PWD); }
   if (params.t) q.set('t', params.t);
   if (params.pg) q.set('pg', params.pg);
   if (params.wd) q.set('wd', params.wd);
@@ -675,7 +676,7 @@ function parseVodBody(s, text) {
 async function fetchVod(src, params, sources = SOURCES) {
   const s = sources[src];
   if (!s) throw new Error('未知采集源');
-  const phpTask = fetchVodViaPhp(src, params);
+  const phpTask = fetchVodViaPhp(src, params, sources === SOURCES_PRO);
   const directTask = (async () => {
     const q = new URLSearchParams(params);
     const url = s.api + (s.api.includes('?') ? '&' : '?') + q.toString();

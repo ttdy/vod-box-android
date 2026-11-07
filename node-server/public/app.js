@@ -3,7 +3,7 @@
 
   const state = {
     sources: [],
-    src: localStorage.getItem('vb_src') || 'liangzi',
+    src: '',
     cats: [],
     cat: '',
     kw: '',
@@ -23,6 +23,8 @@
 
   const PRO_MODE = /^\/aaa(\/|$)/.test(location.pathname);
   const MODE_SUFFIX = PRO_MODE ? '_pro' : '';          // 普通区/高级区数据分开
+  const SRC_KEY = 'vb_src' + MODE_SUFFIX;
+  state.src = localStorage.getItem(SRC_KEY) || '';
   const HISTORY_KEY = 'vb_history_v1' + MODE_SUFFIX;
   const FAV_KEY = 'vb_favorites_v1' + MODE_SUFFIX;
   const API_QM = PRO_MODE ? '&mode=pro&pwd=' + encodeURIComponent(localStorage.getItem('vb_pro_pwd') || '') : '';
@@ -320,11 +322,14 @@
     }
     const sel = $('#srcSel');
     sel.innerHTML = state.sources.map((s) => `<option value="${s.key}">${s.name}</option>`).join('');
+    if (state.sources.length && !state.sources.find((x) => x.key === state.src)) {
+      state.src = state.sources[0].key;
+      localStorage.setItem(SRC_KEY, state.src);
+    }
     sel.value = state.src;
-    if (!sel.value && state.sources.length) state.src = state.sources[0].key;
     sel.addEventListener('change', () => {
       state.src = sel.value;
-      localStorage.setItem('vb_src', state.src);
+      localStorage.setItem(SRC_KEY, state.src);
       state.cat = ''; state.kw = ''; $('#kw').value = '';
       loadCats();
       resetAndLoad();
@@ -513,7 +518,7 @@
     if (src) {
       state.src = src;
       $('#srcSel').value = src;
-      localStorage.setItem('vb_src', src);
+      localStorage.setItem(SRC_KEY, src);
     }
     if (curView !== 'detail') {
       prevDetailView = curView;
@@ -735,7 +740,7 @@
         const [id, src] = el.dataset.i.split('|');
         state.src = src;
         $('#srcSel').value = src;
-        localStorage.setItem('vb_src', src);
+        localStorage.setItem(SRC_KEY, src);
         loadCats();
         const h = findHistory(id, src);
         openDetail(id, { play: true, from: h.actFrom || 0, epIndex: h.epIndex, seek: h.time });
@@ -765,7 +770,7 @@
         const [id, src] = el.dataset.i.split('|');
         state.src = src;
         $('#srcSel').value = src;
-        localStorage.setItem('vb_src', src);
+        localStorage.setItem(SRC_KEY, src);
         loadCats();
         const f = loadFavorites().find((x) => x.id === id && x.src === src);
         openDetail(id, {
