@@ -615,7 +615,9 @@ async function phpFetchText(url, timeout) {
 
 async function fetchVodViaPhp(src, params, pro) {
   const ac = String(params.ac || 'list');
-  const action = (ac === 'detail' || ac === 'videolist') ? 'detail' : 'list';
+  const ids = String(params.ids || '');
+  const batch = (ac === 'detail' || ac === 'videolist') && ids.indexOf(',') >= 0;
+  const action = batch ? 'poster' : ((ac === 'detail' || ac === 'videolist') ? 'detail' : 'list');
   const q = new URLSearchParams({ action: action, src: src });
   if (pro) { q.set('mode', 'pro'); q.set('pwd', PRO_PWD); }
   if (params.t) q.set('t', params.t);
@@ -628,7 +630,20 @@ async function fetchVodViaPhp(src, params, pro) {
       const text = await phpFetchText(host + '/api.php?' + q.toString(), 8000);
       if (!text) continue;
       const data = JSON.parse(text);
+      if (action === 'poster') {
+        if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+        const list = [];
+        for (const id of Object.keys(data)) {
+          const pic = data[id];
+          if (typeof pic === 'string' && pic) list.push(normalizeItem({ vod_id: id, vod_pic: pic }));
+        }
+        if (!list.length) continue;
+        return { page: 1, pagecount: 1, limit: list.length, total: list.length, list };
+      }
       if (action === 'detail') {
+        if (data && Array.isArray(data.list) && data.list.length) {
+          return { page: 1, pagecount: 1, limit: data.list.length, total: data.list.length, list: data.list.map(normalizeItem) };
+        }
         const item = data && data.detail;
         if (!item) continue;
         return { page: 1, pagecount: 1, limit: 1, total: 1, list: [normalizeItem(item)] };
