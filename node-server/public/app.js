@@ -888,8 +888,12 @@
   let syncPushTimer = null;
   let syncLastSnap = '';
 
-  function syncCode() { return (localStorage.getItem(SYNC_CODE_KEY) || '').trim(); }
-  function syncEnabled() { return localStorage.getItem(SYNC_ON_KEY) === '1' && syncCode().length >= 4; }
+  function syncCode() {
+    const s = (localStorage.getItem(SYNC_CODE_KEY) || '').trim();
+    if (s.length < 4 || s.length > 64) return '';
+    return s;
+  }
+  function syncEnabled() { return localStorage.getItem(SYNC_ON_KEY) === '1' && !!syncCode(); }
   function syncMode() { return PRO_MODE ? 'pro' : 'normal'; }
 
   function syncSetStatus(msg, ok) {
@@ -929,7 +933,9 @@
 
   // 拉取云端记录
   async function syncFetchRemote() {
-    const r = await fetch(syncUrl('/api/sync?key=' + encodeURIComponent(syncCode()) + '&mode=' + syncMode()));
+    const code = syncCode();
+    if (!code) throw new Error('no-sync-code');
+    const r = await fetch(syncUrl('/api/sync?key=' + encodeURIComponent(code) + '&mode=' + syncMode()));
     if (!r.ok) throw new Error('http ' + r.status);
     const j = await r.json();
     if (!j || !j.ok) throw new Error('bad response');
@@ -972,14 +978,15 @@
 
   // force=true 才允许本地为空时上传（仅用户明确点「保存到云端」）
   async function syncPush(force) {
-    if (!syncEnabled()) return false;
+    const code = syncCode();
+    if (!syncEnabled() || !code) return false;
     const history = loadHistory();
     const favorites = loadFavorites();
     const searchHistory = getSearchHist();
     if (!force && !history.length && !favorites.length && !searchHistory.length) return false;
     try {
       const updatedAt = Date.now();
-      const r = await fetch(syncUrl('/api/sync?key=' + encodeURIComponent(syncCode()) + '&mode=' + syncMode()), {
+      const r = await fetch(syncUrl('/api/sync?key=' + encodeURIComponent(code) + '&mode=' + syncMode()), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ history: history, favorites: favorites, searchHistory: searchHistory, updatedAt: updatedAt }),
@@ -1017,7 +1024,7 @@
   function syncReadCode() {
     const input = document.getElementById('syncCodeInput');
     const code = (input ? input.value : '').trim();
-    if (code.length < 4) { syncSetStatus('同步码至少 4 位', false); return ''; }
+    if (code.length < 4 || code.length > 64) { syncSetStatus('同步码至少 4 位', false); return ''; }
     localStorage.setItem(SYNC_CODE_KEY, code);
     localStorage.setItem(SYNC_ON_KEY, '1');
     return code;

@@ -1043,7 +1043,7 @@ function readRawBody(req, limit = 2 * 1024 * 1024) {
 
 async function proxySync(req, res) {
   const key = String(req.query.key || '').trim();
-  if (key.length < 4) { res.status(400).json({ error: 'bad-key', message: '同步码至少 4 位' }); return; }
+  if (!key || key.length < 4 || key.length > 64) { res.status(400).json({ error: 'bad-key', message: '同步码至少 4 位' }); return; }
   const mode = req.query.mode === 'pro' ? 'pro' : 'normal';
   const qs = '?key=' + encodeURIComponent(key) + '&mode=' + mode;
   let body = null;
