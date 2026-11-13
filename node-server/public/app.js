@@ -578,7 +578,7 @@
 
   function renderEpBlock(h) {
     const box = $('#epBlock');
-    if (!state.plays.length) { box.innerHTML = ''; return; }
+    if (!state.plays.length) { box.innerHTML = ''; updateEpNav(); return; }
     const faved = isFavorited(state.detail.vod_id, state.src);
     const srcBtns = state.plays.length > 1
       ? state.plays.map((p, i) =>
@@ -604,6 +604,7 @@
     box.querySelectorAll('.ep-list button').forEach((b) => {
       b.addEventListener('click', () => playEpisode(state.actFrom, +b.dataset.ep, 0, false));
     });
+    updateEpNav();
   }
 
   // 收藏/取消收藏当前影片（含正在播放的线路与剧集地址）
@@ -625,6 +626,35 @@
       });
     }
     renderEpBlock(findHistory(id, src));
+  }
+
+  function currentEps() {
+    const p = state.plays[state.actFrom];
+    return p && p.eps ? p.eps : [];
+  }
+
+  function updateEpNav() {
+    const prevBtn = $('#prevEpBtn');
+    const nextBtn = $('#nextEpBtn');
+    const label = $('#epNavLabel');
+    if (!prevBtn || !nextBtn) return;
+    const eps = currentEps();
+    const i = state.actEp;
+    const playing = i >= 0 && i < eps.length;
+    prevBtn.disabled = !playing || i <= 0;
+    nextBtn.disabled = !playing || i >= eps.length - 1;
+    if (label) {
+      label.textContent = playing
+        ? (eps[i].name || ('第' + (i + 1) + '集'))
+        : '选择剧集开始播放';
+    }
+  }
+
+  function stepEpisode(delta) {
+    const next = state.actEp + delta;
+    const eps = currentEps();
+    if (next < 0 || next >= eps.length) return;
+    playEpisode(state.actFrom, next, 0, false);
   }
 
   async function playEpisode(fromIdx, epIdx, seek, forceSeek) {
@@ -718,6 +748,14 @@
       updateHistoryProgress(state.detail.vod_id, state.src, state.actEp, video.currentTime, video.duration);
     }
   });
+  video.addEventListener('ended', () => {
+    const eps = currentEps();
+    if (state.actEp >= 0 && state.actEp < eps.length - 1) stepEpisode(1);
+  });
+  const prevEpBtn = $('#prevEpBtn');
+  const nextEpBtn = $('#nextEpBtn');
+  if (prevEpBtn) prevEpBtn.addEventListener('click', () => stepEpisode(-1));
+  if (nextEpBtn) nextEpBtn.addEventListener('click', () => stepEpisode(1));
 
   // ---------- 历史视图 ----------
   function renderHistory() {
