@@ -144,29 +144,57 @@
 
     let g = null;
     let hideTimer = null;
+    let speedTimer = null;
+    let speeding = false;
     function flash(el, text) {
       el.textContent = text;
       el.style.display = 'block';
       if (hideTimer) clearTimeout(hideTimer);
       hideTimer = setTimeout(() => { tip.style.display = 'none'; hud.style.display = 'none'; }, 700);
     }
+    function clearSpeedTimer() {
+      if (speedTimer) { clearTimeout(speedTimer); speedTimer = null; }
+    }
+    function startSpeed() {
+      speedTimer = null;
+      if (!g || g.mode) return;
+      if (video.paused) return;
+      g.mode = 'speed';
+      speeding = true;
+      try { video.playbackRate = 3; } catch (e) {}
+      if (hideTimer) clearTimeout(hideTimer);
+      hud.textContent = '3× 快进';
+      hud.style.display = 'block';
+      tip.style.display = 'none';
+    }
+    function stopSpeed() {
+      clearSpeedTimer();
+      if (!speeding) return;
+      speeding = false;
+      try { video.playbackRate = 1; } catch (e) {}
+    }
 
+    video.addEventListener('contextmenu', (e) => { e.preventDefault(); });
     video.addEventListener('touchstart', (e) => {
-      if (e.touches.length !== 1) { g = null; return; }
+      if (e.touches.length !== 1) { clearSpeedTimer(); g = null; return; }
       const t = e.touches[0];
       const r = video.getBoundingClientRect();
       // 底部 52px 让给原生控制条，避免误触
-      if (t.clientY > r.bottom - 52) { g = null; return; }
+      if (t.clientY > r.bottom - 52) { clearSpeedTimer(); g = null; return; }
+      stopSpeed();
       g = { x: t.clientX, y: t.clientY, mode: null, zone: null, base: video.currentTime, startVal: 0 };
+      speedTimer = setTimeout(startSpeed, 400);
     }, { passive: true });
 
     video.addEventListener('touchmove', (e) => {
       if (!g) return;
+      if (g.mode === 'speed') return;
       const t = e.touches[0];
       const dx = t.clientX - g.x;
       const dy = t.clientY - g.y;
       if (g.mode === null) {
         if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return;
+        clearSpeedTimer();
         if (Math.abs(dx) >= Math.abs(dy)) {
           if (!isFinite(video.duration) || video.duration <= 0) { g = null; return; }
           g.mode = 'seek';
@@ -206,10 +234,12 @@
     }, { passive: false });
 
     const end = () => {
+      const wasSpeed = g && g.mode === 'speed';
+      stopSpeed();
       if (!g) return;
       g = null;
       if (hideTimer) clearTimeout(hideTimer);
-      hideTimer = setTimeout(() => { tip.style.display = 'none'; hud.style.display = 'none'; }, 700);
+      hideTimer = setTimeout(() => { tip.style.display = 'none'; hud.style.display = 'none'; }, wasSpeed ? 200 : 700);
     };
     video.addEventListener('touchend', end);
     video.addEventListener('touchcancel', end);
@@ -685,6 +715,7 @@
 
   function loadVideo(url, type, seek) {
     destroyHls();
+    try { video.playbackRate = 1; } catch (e) {}
     resumePending = seek > 0 ? seek : 0;
     resumeTries = 0;
     const streamUrl = '/api/stream?u=' + encodeURIComponent(url);
